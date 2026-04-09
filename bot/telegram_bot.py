@@ -86,8 +86,10 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     try:
         tg_file = await document.get_file()
         file_bytes = await tg_file.download_as_bytearray()
+        logger.info("Downloaded %s (%d bytes)", filename, len(file_bytes))
 
         chunks = process_document(bytes(file_bytes), filename)
+        logger.info("Processed %d chunks from %s", len(chunks), filename)
         if not chunks:
             await msg.edit_text("⚠️ Không extract được text từ file này.")
             return
@@ -100,9 +102,12 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             f"Dùng /ask để hỏi về tài liệu."
         )
     except Exception as exc:
-        logger.exception("Error processing file %s", filename)
+        logger.exception("Error processing file %s: %s", filename, exc)
         err_msg = str(exc)[:500]
-        await msg.edit_text(f"❌ Lỗi khi xử lý file:\n\n<code>{err_msg}</code>", parse_mode="HTML")
+        try:
+            await msg.edit_text(f"❌ Lỗi khi xử lý file:\n\n<code>{err_msg}</code>", parse_mode="HTML")
+        except Exception:
+            await update.message.reply_text(f"❌ Lỗi: <code>{err_msg}</code>", parse_mode="HTML")
 
 
 # ---------------------------------------------------------------------------
