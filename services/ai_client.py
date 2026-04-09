@@ -60,35 +60,35 @@ def _openai_chat(system: str, user: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Gemini implementation
+# Gemini implementation  (google-genai SDK ≥ 0.5)
 # ---------------------------------------------------------------------------
 
 def _gemini_embed(texts: list[str]) -> list[list[float]]:
-    import google.generativeai as genai
+    from google import genai
+    from google.genai import types
 
-    genai.configure(api_key=settings.GEMINI_API_KEY)
-    embeddings = []
-    for text in texts:
-        result = genai.embed_content(
-            model=settings.GEMINI_EMBEDDING_MODEL,
-            content=text,
-            task_type="retrieval_document",
-        )
-        embeddings.append(result["embedding"])
-    return embeddings
+    client = genai.Client(api_key=settings.GEMINI_API_KEY)
+    result = client.models.embed_content(
+        model=settings.GEMINI_EMBEDDING_MODEL,
+        contents=texts,
+        config=types.EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT"),
+    )
+    return [e.values for e in result.embeddings]
 
 
 def _gemini_chat(system: str, user: str) -> str:
-    import google.generativeai as genai
+    from google import genai
+    from google.genai import types
 
-    genai.configure(api_key=settings.GEMINI_API_KEY)
-    model = genai.GenerativeModel(
-        model_name=settings.LLM_MODEL,
-        system_instruction=system,
-    )
-    response = model.generate_content(
-        user,
-        generation_config={"temperature": 0.1, "max_output_tokens": 2000},
+    client = genai.Client(api_key=settings.GEMINI_API_KEY)
+    response = client.models.generate_content(
+        model=settings.LLM_MODEL,
+        contents=user,
+        config=types.GenerateContentConfig(
+            system_instruction=system,
+            temperature=0.1,
+            max_output_tokens=2000,
+        ),
     )
     return response.text or ""
 

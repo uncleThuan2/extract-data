@@ -132,6 +132,8 @@ python run.py telegram &
 | `/export` | ✅ | ✅ | Xuất lịch sử Q&A → Excel |
 | `/files` | ✅ | ✅ | Xem danh sách + số thứ tự file đã index |
 | `/delete <tên file>` | ✅ | ✅ | Xóa file khỏi vector store |
+| `/storage` | ✅ | ✅ | Dung lượng |
+
 
 ## Ví dụ sử dụng
 
@@ -141,6 +143,7 @@ python run.py telegram &
 /ask Liệt kê tất cả các điều khoản về thanh toán
 /extract tất cả tên công ty và địa chỉ
 /export          → Download Excel with all Q&A history
+/storage  Dung lượng
 ```
 
 ## Chi phí
