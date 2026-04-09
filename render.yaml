@@ -10,16 +10,23 @@ services:
 
     envVars:
       - key: AI_PROVIDER
-        value: openai          # hoặc gemini / copilot
+        sync: false        # hoặc gemini / copilot
 
       # Điền các giá trị bí mật trực tiếp trong Render Dashboard
       # (hoặc dùng fromGroup nếu bạn tạo Environment Group)
-      - key: OPENAI_API_KEY
-        sync: false
+      # - key: OPENAI_API_KEY
+      #   sync: false
       - key: GEMINI_API_KEY
         sync: false
-      - key: GITHUB_TOKEN
+       # Tuỳ chỉnh model / chunk nếu cần
+      - key: LLM_MODEL
         sync: false
+      - key: EMBEDDING_MODEL
+        sync: false
+      - key: EMBEDDING_DIMENSION
+        sync: false
+      # - key: GITHUB_TOKEN
+      #   sync: false
       - key: DISCORD_BOT_TOKEN
         sync: false
       - key: TELEGRAM_BOT_TOKEN
@@ -30,15 +37,10 @@ services:
         sync: false
       - key: SUPABASE_DB_URL
         sync: false
+      - key: PORT
+        sync: false
 
-      # Tuỳ chỉnh model / chunk nếu cần
-      - key: LLM_MODEL
-        value: gpt-4o-mini
-      - key: EMBEDDING_MODEL
-        value: text-embedding-3-small
-      - key: EMBEDDING_DIMENSION
-        value: "1536"
       - key: CHUNK_SIZE
-        value: "1000"
+        sync: false
       - key: CHUNK_OVERLAP
-        value: "200"
+        sync: false
