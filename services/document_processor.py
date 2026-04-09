@@ -18,8 +18,6 @@ import io
 import json
 import logging
 from pathlib import PurePath
-
-import pdfplumber
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 from config import settings
@@ -67,10 +65,12 @@ def get_supported_extensions_str() -> str:
 # ---------------------------------------------------------------------------
 
 def _extract_pdf(data: bytes, filename: str) -> list[dict]:
+    import pymupdf  # pymupdf (fitz) – 5-10x faster than pdfplumber
+
     pages = []
-    with pdfplumber.open(io.BytesIO(data)) as pdf:
-        for i, page in enumerate(pdf.pages):
-            text = page.extract_text() or ""
+    with pymupdf.open(stream=data, filetype="pdf") as doc:
+        for i, page in enumerate(doc):
+            text = page.get_text() or ""
             if text.strip():
                 pages.append({"text": text, "page_number": i + 1, "filename": filename})
     return pages

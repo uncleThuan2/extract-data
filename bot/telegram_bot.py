@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
 from collections import defaultdict
@@ -88,14 +89,14 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         file_bytes = await tg_file.download_as_bytearray()
         logger.info("Downloaded %s (%d bytes)", filename, len(file_bytes))
 
-        chunks = process_document(bytes(file_bytes), filename)
+        chunks = await asyncio.to_thread(process_document, bytes(file_bytes), filename)
         logger.info("Processed %d chunks from %s", len(chunks), filename)
         if not chunks:
             await msg.edit_text("⚠️ Không extract được text từ file này.")
             return
 
         await msg.edit_text(f"⏳ Đang embed {len(chunks)} chunks lên Supabase...")
-        count = upsert_chunks(chunks)
+        count = await asyncio.to_thread(upsert_chunks, chunks)
         await msg.edit_text(
             f"✅ {filename} đã index thành công!\n"
             f"📄 {count} chunks lưu trên Supabase.\n\n"
@@ -124,7 +125,7 @@ async def ask_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = await update.message.reply_text("🤔 Đang tìm câu trả lời...")
 
     try:
-        result = ask(question)
+        result = await asyncio.to_thread(ask, question)
         qa_history[update.effective_chat.id].append(result)
 
         answer = result.answer
@@ -153,7 +154,7 @@ async def export_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     msg = await update.message.reply_text("📊 Đang tạo file Excel...")
     try:
-        excel_bytes = export_qa_history(history)
+        excel_bytes = await asyncio.to_thread(export_qa_history, history)
         await update.message.reply_document(
             document=io.BytesIO(excel_bytes),
             filename="qa_report.xlsx",
@@ -180,14 +181,14 @@ async def extract_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     msg = await update.message.reply_text("⏳ Đang trích xuất data...")
     try:
         extraction_prompt = EXTRACTION_PROMPT_TEMPLATE.format(prompt=prompt)
-        result = ask(extraction_prompt, top_k=10)
+        result = await asyncio.to_thread(ask, extraction_prompt, 10)
 
         headers, rows = parse_pipe_table(result.answer)
         if not rows:
             await msg.edit_text(f"📝 {result.answer}")
             return
 
-        excel_bytes = export_extracted_data(rows, headers)
+        excel_bytes = await asyncio.to_thread(export_extracted_data, rows, headers)
         await update.message.reply_document(
             document=io.BytesIO(excel_bytes),
             filename="extracted_data.xlsx",
@@ -205,7 +206,7 @@ async def extract_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 async def files_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = await update.message.reply_text("📂 Đang tải danh sách...")
     try:
-        filenames = list_indexed_files()
+        filenames = await asyncio.to_thread(list_indexed_files)
         if not filenames:
             await msg.edit_text("💭 Chưa có file nào. Gửi file để bắt đầu.")
             return
@@ -234,7 +235,7 @@ async def delete_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     msg = await update.message.reply_text(f"⏳ Đang xóa {filename}...")
     try:
-        count = delete_file(filename)
+        count = await asyncio.to_thread(delete_file, filename)
         if count == 0:
             await msg.edit_text(
                 f"⚠️ Không tìm thấy file *{filename}*.\n"
@@ -257,7 +258,7 @@ async def delete_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 async def storage_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = await update.message.reply_text("📊 Đang kiểm tra dung lượng...")
     try:
-        stats = get_storage_stats()
+        stats = await asyncio.to_thread(get_storage_stats)
         text = format_storage_stats(stats, bold="*")
         await msg.edit_text(text, parse_mode="Markdown")
     except Exception:

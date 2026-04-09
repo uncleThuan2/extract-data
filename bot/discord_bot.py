@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
 from collections import defaultdict
@@ -67,13 +68,13 @@ async def upload_cmd(interaction: discord.Interaction, file: discord.Attachment)
     await interaction.response.defer(thinking=True)
     try:
         file_bytes = await file.read()
-        chunks = process_document(file_bytes, file.filename)
+        chunks = await asyncio.to_thread(process_document, file_bytes, file.filename)
         if not chunks:
             await interaction.followup.send("⚠️ Could not extract text from this file.")
             return
 
         await interaction.followup.send(f"⏳ Embedding {len(chunks)} chunks to Supabase...")
-        count = upsert_chunks(chunks)
+        count = await asyncio.to_thread(upsert_chunks, chunks)
         await interaction.followup.send(
             f"✅ **{file.filename}** indexed successfully!\n"
             f"📄 {count} chunks stored in Supabase.\n"
@@ -93,7 +94,7 @@ async def upload_cmd(interaction: discord.Interaction, file: discord.Attachment)
 async def ask_cmd(interaction: discord.Interaction, question: str) -> None:
     await interaction.response.defer(thinking=True)
     try:
-        result = ask(question)
+        result = await asyncio.to_thread(ask, question)
         qa_history[interaction.channel_id].append(result)
 
         answer = result.answer
@@ -125,7 +126,7 @@ async def export_cmd(interaction: discord.Interaction) -> None:
 
     await interaction.response.defer(thinking=True)
     try:
-        excel_bytes = export_qa_history(history)
+        excel_bytes = await asyncio.to_thread(export_qa_history, history)
         file = discord.File(io.BytesIO(excel_bytes), filename="qa_report.xlsx")
         await interaction.followup.send(
             f"📊 Exported **{len(history)}** Q&A entries.", file=file
@@ -149,14 +150,14 @@ async def extract_cmd(interaction: discord.Interaction, prompt: str) -> None:
     await interaction.response.defer(thinking=True)
     try:
         extraction_prompt = EXTRACTION_PROMPT_TEMPLATE.format(prompt=prompt)
-        result = ask(extraction_prompt, top_k=10)
+        result = await asyncio.to_thread(ask, extraction_prompt, 10)
 
         headers, rows = parse_pipe_table(result.answer)
         if not rows:
             await interaction.followup.send(f"📝 {result.answer}")
             return
 
-        excel_bytes = export_extracted_data(rows, headers)
+        excel_bytes = await asyncio.to_thread(export_extracted_data, rows, headers)
         file = discord.File(io.BytesIO(excel_bytes), filename="extracted_data.xlsx")
         await interaction.followup.send(
             f"📊 Extracted **{len(rows)}** rows.", file=file
@@ -173,7 +174,7 @@ async def extract_cmd(interaction: discord.Interaction, prompt: str) -> None:
 async def files_cmd(interaction: discord.Interaction) -> None:
     await interaction.response.defer(thinking=True)
     try:
-        filenames = list_indexed_files()
+        filenames = await asyncio.to_thread(list_indexed_files)
         if not filenames:
             await interaction.followup.send("💭 No files indexed yet. Use `/upload`.")
             return
@@ -194,7 +195,7 @@ async def files_cmd(interaction: discord.Interaction) -> None:
 async def delete_cmd(interaction: discord.Interaction, filename: str) -> None:
     await interaction.response.defer(thinking=True)
     try:
-        count = delete_file(filename)
+        count = await asyncio.to_thread(delete_file, filename)
         if count == 0:
             await interaction.followup.send(
                 f"⚠️ File **{filename}** not found. Use `/files` to see available names."
@@ -215,7 +216,7 @@ async def delete_cmd(interaction: discord.Interaction, filename: str) -> None:
 async def storage_cmd(interaction: discord.Interaction) -> None:
     await interaction.response.defer(thinking=True)
     try:
-        stats = get_storage_stats()
+        stats = await asyncio.to_thread(get_storage_stats)
         msg = format_storage_stats(stats, bold="**")
         await interaction.followup.send(msg)
     except Exception:
