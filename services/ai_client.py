@@ -65,30 +65,41 @@ def _openai_chat(system: str, user: str) -> str:
 
 def _gemini_embed(texts: list[str]) -> list[list[float]]:
     from google import genai
-    from google.genai import types
 
-    client = genai.Client(api_key=settings.GEMINI_API_KEY)
-    result = client.models.embed_content(
-        model=settings.GEMINI_EMBEDDING_MODEL,
+    client = genai.Client(
+        api_key=settings.GEMINI_API_KEY,
+    )
+
+    response = client.models.embed_content(
+        model="text-embedding-004",
         contents=texts,
     )
-    return [e.values for e in result.embeddings]
+
+    return [e.values for e in response.embeddings]
 
 
 def _gemini_chat(system: str, user: str) -> str:
     from google import genai
-    from google.genai import types
 
     client = genai.Client(api_key=settings.GEMINI_API_KEY)
     response = client.models.generate_content(
         model=settings.LLM_MODEL,
         contents=user,
-        config=types.GenerateContentConfig(
-            system_instruction=system,
-            temperature=0.1,
-            max_output_tokens=2000,
-        ),
+        system_instruction=system,
     )
+    return response.text or ""
+
+def _gemini_chat(system: str, user: str) -> str:
+    from google import genai
+
+    client = genai.Client(api_key=settings.GEMINI_API_KEY)
+
+    response = client.models.generate_content(
+        model=settings.LLM_MODEL,
+        contents = f"{system}\n\nUser: {user}"
+        
+    )
+
     return response.text or ""
 
 
