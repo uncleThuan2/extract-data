@@ -1,0 +1,29 @@
+# Document processing
+pdfplumber==0.11.4
+python-docx==1.1.2
+
+# LangChain + AI
+langchain==0.3.14
+langchain-openai==0.3.0
+langchain-community==0.3.14
+openai==1.58.1
+
+# Google Gemini (alternative to OpenAI)
+google-generativeai==0.8.3
+
+# Vector store - Supabase
+supabase==2.11.0
+vecs==0.4.4
+
+# Discord bot
+discord.py==2.4.0
+
+# Telegram bot
+python-telegram-bot==21.8
+
+# Excel generation
+openpyxl==3.1.5
+
+# Utilities
+python-dotenv==1.0.1
+tiktoken==0.8.0
