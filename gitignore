@@ -1,6 +1,0 @@
-__pycache__/
-*.pyc
-.env
-venv/
-*.xlsx
-.DS_Store
