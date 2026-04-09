@@ -1,9 +1,14 @@
-"""Unified AI client – supports OpenAI, Google Gemini, and GitHub Copilot.
+"""Unified AI client – supports OpenAI, Google Gemini, GitHub Copilot, and Jina AI.
 
-Switch provider via AI_PROVIDER in .env:
+Chat provider → set AI_PROVIDER in .env:
   AI_PROVIDER=openai    → uses OPENAI_API_KEY
-  AI_PROVIDER=gemini    → uses GEMINI_API_KEY (free tier)
-  AI_PROVIDER=copilot   → uses GITHUB_TOKEN (GitHub Copilot subscribers, free)
+  AI_PROVIDER=gemini    → uses GEMINI_API_KEY (free)
+  AI_PROVIDER=copilot   → uses GITHUB_TOKEN
+
+Embed provider → set EMBED_PROVIDER (optional, defaults to AI_PROVIDER):
+  EMBED_PROVIDER=jina   → uses JINA_API_KEY (free 1M tokens/month, no RPM limit)
+
+Recommended combo: AI_PROVIDER=gemini + EMBED_PROVIDER=jina
 """
 
 from __future__ import annotations
@@ -139,6 +144,31 @@ def _gemini_chat(system: str, user: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Jina AI embedding  (OpenAI-compatible, free 1M tokens/month, no RPM limit)
+# Docs: https://jina.ai/embeddings
+# ---------------------------------------------------------------------------
+
+_JINA_BASE_URL = "https://api.jina.ai/v1"
+_JINA_EMBED_BATCH = 2048  # max items per call
+
+
+def _jina_embed(texts: list[str]) -> list[list[float]]:
+    from openai import OpenAI
+
+    client = OpenAI(api_key=settings.JINA_API_KEY, base_url=_JINA_BASE_URL)
+    embeddings: list[list[float]] = []
+    for i in range(0, len(texts), _JINA_EMBED_BATCH):
+        batch = texts[i : i + _JINA_EMBED_BATCH]
+        response = client.embeddings.create(
+            model=settings.JINA_EMBEDDING_MODEL,
+            input=batch,
+            extra_body={"dimensions": settings.EMBEDDING_DIMENSION},
+        )
+        embeddings.extend(item.embedding for item in response.data)
+    return embeddings
+
+
+# ---------------------------------------------------------------------------
 # GitHub Copilot implementation (GitHub Models API – OpenAI-compatible)
 # Docs: https://docs.github.com/en/github-models
 # ---------------------------------------------------------------------------
@@ -184,7 +214,10 @@ def _copilot_chat(system: str, user: str) -> str:
 # ---------------------------------------------------------------------------
 
 def get_embed_fn() -> EmbedFn:
-    provider = settings.AI_PROVIDER
+    provider = settings.effective_embed_provider
+    if provider == "jina":
+        logger.debug("Using Jina AI embedding (%s, %d dims)", settings.JINA_EMBEDDING_MODEL, settings.EMBEDDING_DIMENSION)
+        return _jina_embed
     if provider == "gemini":
         logger.debug("Using Gemini embedding (%s)", settings.GEMINI_EMBEDDING_MODEL)
         return _gemini_embed
