@@ -1,0 +1,44 @@
+services:
+  - type: web
+    name: extract-data-bot
+    runtime: docker            # <-- dùng Docker thay vì native Python build
+    dockerfilePath: ./Dockerfile
+    plan: free
+
+    # Render tự inject PORT; health server đọc từ env var PORT
+    healthCheckPath: /health
+
+    envVars:
+      - key: AI_PROVIDER
+        value: openai          # hoặc gemini / copilot
+
+      # Điền các giá trị bí mật trực tiếp trong Render Dashboard
+      # (hoặc dùng fromGroup nếu bạn tạo Environment Group)
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GITHUB_TOKEN
+        sync: false
+      - key: DISCORD_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: SUPABASE_DB_URL
+        sync: false
+
+      # Tuỳ chỉnh model / chunk nếu cần
+      - key: LLM_MODEL
+        value: gpt-4o-mini
+      - key: EMBEDDING_MODEL
+        value: text-embedding-3-small
+      - key: EMBEDDING_DIMENSION
+        value: "1536"
+      - key: CHUNK_SIZE
+        value: "1000"
+      - key: CHUNK_OVERLAP
+        value: "200"
