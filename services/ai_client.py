@@ -61,12 +61,15 @@ def _openai_chat(system: str, user: str) -> str:
 
 # ---------------------------------------------------------------------------
 # Gemini implementation  (google-genai SDK ≥ 1.0)
-# text-embedding-004 is only available on v1beta – use SDK default (v1beta)
-# embedContent accepts ONE content at a time → loop over texts
+# gemini-embedding-001 default output = 3072 dims.
+# We pin output_dimensionality to EMBEDDING_DIMENSION so it matches
+# whatever dimension the Supabase collection was created with.
+# embedContent accepts ONE content at a time → loop over texts.
 # ---------------------------------------------------------------------------
 
 def _gemini_embed(texts: list[str]) -> list[list[float]]:
     from google import genai
+    from google.genai import types
 
     client = genai.Client(api_key=settings.GEMINI_API_KEY)
     embeddings = []
@@ -74,6 +77,9 @@ def _gemini_embed(texts: list[str]) -> list[list[float]]:
         response = client.models.embed_content(
             model=settings.GEMINI_EMBEDDING_MODEL,
             contents=text,
+            config=types.EmbedContentConfig(
+                output_dimensionality=settings.EMBEDDING_DIMENSION,
+            ),
         )
         embeddings.append(response.embeddings[0].values)
     return embeddings
