@@ -72,15 +72,17 @@ async def upload_cmd(interaction: discord.Interaction, file: discord.Attachment)
             await interaction.followup.send("⚠️ Could not extract text from this file.")
             return
 
+        await interaction.followup.send(f"⏳ Embedding {len(chunks)} chunks to Supabase...")
         count = upsert_chunks(chunks)
         await interaction.followup.send(
             f"✅ **{file.filename}** indexed successfully!\n"
             f"📄 {count} chunks stored in Supabase.\n"
             f"Now ask me anything with `/ask`."
         )
-    except Exception:
+    except Exception as exc:
         logger.exception("Error processing file %s", file.filename)
-        await interaction.followup.send("❌ Error processing file. Check logs.")
+        err_msg = str(exc)[:500]
+        await interaction.followup.send(f"❌ Error processing file:\n```\n{err_msg}\n```")
 
 
 # ---------------------------------------------------------------------------

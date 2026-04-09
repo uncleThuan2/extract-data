@@ -92,15 +92,17 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await msg.edit_text("⚠️ Không extract được text từ file này.")
             return
 
+        await msg.edit_text(f"⏳ Đang embed {len(chunks)} chunks lên Supabase...")
         count = upsert_chunks(chunks)
         await msg.edit_text(
             f"✅ {filename} đã index thành công!\n"
             f"📄 {count} chunks lưu trên Supabase.\n\n"
             f"Dùng /ask để hỏi về tài liệu."
         )
-    except Exception:
+    except Exception as exc:
         logger.exception("Error processing file %s", filename)
-        await msg.edit_text("❌ Lỗi khi xử lý file. Kiểm tra logs.")
+        err_msg = str(exc)[:500]
+        await msg.edit_text(f"❌ Lỗi khi xử lý file:\n\n<code>{err_msg}</code>", parse_mode="HTML")
 
 
 # ---------------------------------------------------------------------------

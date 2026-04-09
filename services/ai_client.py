@@ -64,24 +64,29 @@ def _openai_chat(system: str, user: str) -> str:
 # gemini-embedding-001 default output = 3072 dims.
 # We pin output_dimensionality to EMBEDDING_DIMENSION so it matches
 # whatever dimension the Supabase collection was created with.
-# embedContent accepts ONE content at a time → loop over texts.
+# embed_content accepts a list of strings → batched in one call (max 100).
 # ---------------------------------------------------------------------------
+
+_GEMINI_EMBED_BATCH = 100  # max items per embed_content call
+
 
 def _gemini_embed(texts: list[str]) -> list[list[float]]:
     from google import genai
     from google.genai import types
 
     client = genai.Client(api_key=settings.GEMINI_API_KEY)
-    embeddings = []
-    for text in texts:
+    config = types.EmbedContentConfig(
+        output_dimensionality=settings.EMBEDDING_DIMENSION,
+    )
+    embeddings: list[list[float]] = []
+    for i in range(0, len(texts), _GEMINI_EMBED_BATCH):
+        batch = texts[i : i + _GEMINI_EMBED_BATCH]
         response = client.models.embed_content(
             model=settings.GEMINI_EMBEDDING_MODEL,
-            contents=text,
-            config=types.EmbedContentConfig(
-                output_dimensionality=settings.EMBEDDING_DIMENSION,
-            ),
+            contents=batch,
+            config=config,
         )
-        embeddings.append(response.embeddings[0].values)
+        embeddings.extend(e.values for e in response.embeddings)
     return embeddings
 
 
