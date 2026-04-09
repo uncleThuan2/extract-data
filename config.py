@@ -16,7 +16,7 @@ class Settings:
 
     # --- Google Gemini ---
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
-    GEMINI_EMBEDDING_MODEL: str = os.getenv("GEMINI_EMBEDDING_MODEL", "models/text-embedding-004")
+    GEMINI_EMBEDDING_MODEL: str = os.getenv("GEMINI_EMBEDDING_MODEL", "text-embedding-004")
 
     # --- GitHub Copilot (GitHub Models API) ---
     GITHUB_TOKEN: str = os.getenv("GITHUB_TOKEN", "")

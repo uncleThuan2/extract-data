@@ -3,11 +3,8 @@ services:
     name: extract-data-bot
     runtime: python3
     buildCommand: pip install -r requirements.txt
-    startCommand: python run.py both
+    startCommand: python run.py telegram
     plan: free
-    healthCheckPath: /health
-
-    # Render tự inject PORT; health server đọc từ env var PORT
     healthCheckPath: /health
 
     envVars:
