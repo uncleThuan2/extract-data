@@ -9,7 +9,7 @@ langchain-community==0.3.14
 openai==1.58.1
 
 # Google Gemini (alternative to OpenAI)
-google-genai==0.5.0
+google-genai==1.67.0
 
 # Vector store - Supabase
 supabase==2.11.0

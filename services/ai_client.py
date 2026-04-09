@@ -71,7 +71,6 @@ def _gemini_embed(texts: list[str]) -> list[list[float]]:
     result = client.models.embed_content(
         model=settings.GEMINI_EMBEDDING_MODEL,
         contents=texts,
-        config=types.EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT"),
     )
     return [e.values for e in result.embeddings]
 
