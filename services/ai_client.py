@@ -61,34 +61,29 @@ def _openai_chat(system: str, user: str) -> str:
 
 # ---------------------------------------------------------------------------
 # Gemini implementation  (google-genai SDK ≥ 1.0)
-# Force v1 API – embed_content is not available in v1beta
+# text-embedding-004 is only available on v1beta – use SDK default (v1beta)
+# embedContent accepts ONE content at a time → loop over texts
 # ---------------------------------------------------------------------------
-
-_GEMINI_HTTP_OPTIONS = {"api_version": "v1"}
-
 
 def _gemini_embed(texts: list[str]) -> list[list[float]]:
     from google import genai
 
-    client = genai.Client(
-        api_key=settings.GEMINI_API_KEY,
-        http_options=_GEMINI_HTTP_OPTIONS,
-    )
-    response = client.models.embed_content(
-        model=settings.GEMINI_EMBEDDING_MODEL,
-        contents=texts,
-    )
-    return [e.values for e in response.embeddings]
+    client = genai.Client(api_key=settings.GEMINI_API_KEY)
+    embeddings = []
+    for text in texts:
+        response = client.models.embed_content(
+            model=settings.GEMINI_EMBEDDING_MODEL,
+            contents=text,
+        )
+        embeddings.append(response.embeddings[0].values)
+    return embeddings
 
 
 def _gemini_chat(system: str, user: str) -> str:
     from google import genai
     from google.genai import types
 
-    client = genai.Client(
-        api_key=settings.GEMINI_API_KEY,
-        http_options=_GEMINI_HTTP_OPTIONS,
-    )
+    client = genai.Client(api_key=settings.GEMINI_API_KEY)
     response = client.models.generate_content(
         model=settings.LLM_MODEL,
         contents=user,
