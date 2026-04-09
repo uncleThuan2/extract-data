@@ -43,16 +43,16 @@ MAX_TELEGRAM_MSG = 4000
 # ---------------------------------------------------------------------------
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
-        "👋 *PDF Q&A Bot*\n\n"
-        "Tôi có thể giúp bạn hỏi đáp tài liệu PDF\\!\n\n"
-        "📌 *Commands:*\n"
-        "/upload – Gửi file để index \(PDF, DOCX, TXT, CSV\.\.\.\)\n"
-        "/ask `<câu hỏi>` – Hỏi về tài liệu\n"
-        "/extract `<mô tả>` – Trích xuất data → Excel\n"
-        "/export – Xuất lịch sử Q&A → Excel\n"
-        "/files – Xem danh sách file đã index\n"
-        "/storage – Xem dung lượng Supabase hiện tại\n\n"
-        "💡 Hoặc gửi file PDF trực tiếp để tôi index\\!",
+        r"👋 *PDF Q&A Bot*" + "\n\n"
+        r"Tôi có thể giúp bạn hỏi đáp tài liệu PDF\!" + "\n\n"
+        r"📌 *Commands:*" + "\n"
+        r"/upload – Gửi file để index \(PDF, DOCX, TXT, CSV\.\.\.\)" + "\n"
+        r"/ask `<câu hỏi>` – Hỏi về tài liệu" + "\n"
+        r"/extract `<mô tả>` – Trích xuất data → Excel" + "\n"
+        r"/export – Xuất lịch sử Q&A → Excel" + "\n"
+        r"/files – Xem danh sách file đã index" + "\n"
+        r"/storage – Xem dung lượng Supabase hiện tại" + "\n\n"
+        r"💡 Hoặc gửi file PDF trực tiếp để tôi index\!",
         parse_mode="MarkdownV2",
     )
 
