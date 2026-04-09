@@ -82,33 +82,49 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
         return
 
-    msg = await update.message.reply_text(f"⏳ Đang xử lý {filename}...")
+    msg = await update.message.reply_text(f"⏳ [1/3] Đang tải file {filename}...")
 
     try:
         tg_file = await document.get_file()
         file_bytes = await tg_file.download_as_bytearray()
-        logger.info("Downloaded %s (%d bytes)", filename, len(file_bytes))
+        size_kb = len(file_bytes) / 1024
+        logger.info("Downloaded %s (%.0f KB)", filename, size_kb)
 
+        await msg.edit_text(f"⏳ [2/3] Đang xử lý văn bản từ {filename}...")
         chunks = await asyncio.to_thread(process_document, bytes(file_bytes), filename)
         logger.info("Processed %d chunks from %s", len(chunks), filename)
         if not chunks:
-            await msg.edit_text("⚠️ Không extract được text từ file này.")
+            await msg.edit_text(
+                f"⚠️ Không extract được text từ <b>{filename}</b>.\n"
+                f"Đảm bảo file có nội dung văn bản (không phải ảnh scan).",
+                parse_mode="HTML",
+            )
             return
 
-        await msg.edit_text(f"⏳ Đang embed {len(chunks)} chunks lên Supabase...")
+        await msg.edit_text(
+            f"⏳ [3/3] Đang embed và lưu {len(chunks)} chunks lên Supabase...\n"
+            f"⏱ File lớn có thể mất vài phút (Gemini free giới hạn 100 req/phút)."
+        )
         count = await asyncio.to_thread(upsert_chunks, chunks)
         await msg.edit_text(
-            f"✅ {filename} đã index thành công!\n"
-            f"📄 {count} chunks lưu trên Supabase.\n\n"
-            f"Dùng /ask để hỏi về tài liệu."
+            f"✅ <b>{filename}</b> đã index thành công!\n"
+            f"ℹ️ Kích thước: {size_kb:.0f} KB\n"
+            f"📄 {count} chunks lưu trên Supabase\n\n"
+            f"Dùng /ask để hỏi về tài liệu.",
+            parse_mode="HTML",
         )
     except Exception as exc:
         logger.exception("Error processing file %s: %s", filename, exc)
         err_msg = str(exc)[:500]
         try:
-            await msg.edit_text(f"❌ Lỗi khi xử lý file:\n\n<code>{err_msg}</code>", parse_mode="HTML")
+            await msg.edit_text(
+                f"❌ <b>Lỗi khi xử lý {filename}:</b>\n\n<code>{err_msg}</code>",
+                parse_mode="HTML",
+            )
         except Exception:
-            await update.message.reply_text(f"❌ Lỗi: <code>{err_msg}</code>", parse_mode="HTML")
+            await update.message.reply_text(
+                f"❌ Lỗi: <code>{err_msg}</code>", parse_mode="HTML"
+            )
 
 
 # ---------------------------------------------------------------------------

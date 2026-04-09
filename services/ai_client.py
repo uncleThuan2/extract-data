@@ -9,6 +9,8 @@ Switch provider via AI_PROVIDER in .env:
 from __future__ import annotations
 
 import logging
+import re
+import time
 from typing import Protocol
 
 from config import settings
@@ -65,14 +67,26 @@ def _openai_chat(system: str, user: str) -> str:
 # We pin output_dimensionality to EMBEDDING_DIMENSION so it matches
 # whatever dimension the Supabase collection was created with.
 # embed_content accepts a list of strings → batched in one call (max 100).
+# Free tier: 100 requests/min → retry with server-suggested wait on 429.
 # ---------------------------------------------------------------------------
 
-_GEMINI_EMBED_BATCH = 100  # max items per embed_content call
+_GEMINI_EMBED_BATCH = 100   # max items per embed_content call
+_GEMINI_MAX_RETRIES = 5
+_GEMINI_RETRY_DEFAULT = 35  # seconds to wait if not specified in error
+
+
+def _parse_retry_after(exc: Exception) -> float:
+    """Extract 'retry in X.Xs' from Gemini 429 error message."""
+    match = re.search(r"retry in ([\d.]+)s", str(exc), re.IGNORECASE)
+    if match:
+        return float(match.group(1)) + 1.0  # +1s buffer
+    return _GEMINI_RETRY_DEFAULT
 
 
 def _gemini_embed(texts: list[str]) -> list[list[float]]:
     from google import genai
     from google.genai import types
+    from google.genai.errors import ClientError
 
     client = genai.Client(api_key=settings.GEMINI_API_KEY)
     config = types.EmbedContentConfig(
@@ -81,12 +95,29 @@ def _gemini_embed(texts: list[str]) -> list[list[float]]:
     embeddings: list[list[float]] = []
     for i in range(0, len(texts), _GEMINI_EMBED_BATCH):
         batch = texts[i : i + _GEMINI_EMBED_BATCH]
-        response = client.models.embed_content(
-            model=settings.GEMINI_EMBEDDING_MODEL,
-            contents=batch,
-            config=config,
-        )
-        embeddings.extend(e.values for e in response.embeddings)
+        for attempt in range(1, _GEMINI_MAX_RETRIES + 1):
+            try:
+                response = client.models.embed_content(
+                    model=settings.GEMINI_EMBEDDING_MODEL,
+                    contents=batch,
+                    config=config,
+                )
+                embeddings.extend(e.values for e in response.embeddings)
+                break
+            except ClientError as exc:
+                if exc.code == 429 and attempt < _GEMINI_MAX_RETRIES:
+                    wait = _parse_retry_after(exc)
+                    logger.warning(
+                        "Gemini rate limit hit (batch %d/%d). Waiting %.0fs before retry %d/%d...",
+                        i // _GEMINI_EMBED_BATCH + 1,
+                        (len(texts) - 1) // _GEMINI_EMBED_BATCH + 1,
+                        wait,
+                        attempt,
+                        _GEMINI_MAX_RETRIES,
+                    )
+                    time.sleep(wait)
+                else:
+                    raise
     return embeddings
 
 

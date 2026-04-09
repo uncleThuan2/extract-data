@@ -66,24 +66,37 @@ async def upload_cmd(interaction: discord.Interaction, file: discord.Attachment)
         return
 
     await interaction.response.defer(thinking=True)
+    msg = await interaction.followup.send(f"⏳ **[1/3]** Downloading `{file.filename}`...")
     try:
         file_bytes = await file.read()
+        size_kb = len(file_bytes) / 1024
+
+        await msg.edit(content=f"⏳ **[2/3]** Extracting text from `{file.filename}`...")
         chunks = await asyncio.to_thread(process_document, file_bytes, file.filename)
         if not chunks:
-            await interaction.followup.send("⚠️ Could not extract text from this file.")
+            await msg.edit(
+                content=f"⚠️ Could not extract text from **{file.filename}**.\n"
+                        f"Make sure the file contains actual text (not a scanned image)."
+            )
             return
 
-        await interaction.followup.send(f"⏳ Embedding {len(chunks)} chunks to Supabase...")
+        await msg.edit(
+            content=f"⏳ **[3/3]** Embedding & saving {len(chunks)} chunks to Supabase...\n"
+                    f"⏱ Large files may take a few minutes (Gemini free: 100 req/min)."
+        )
         count = await asyncio.to_thread(upsert_chunks, chunks)
-        await interaction.followup.send(
-            f"✅ **{file.filename}** indexed successfully!\n"
-            f"📄 {count} chunks stored in Supabase.\n"
-            f"Now ask me anything with `/ask`."
+        await msg.edit(
+            content=f"✅ **{file.filename}** indexed successfully!\n"
+                    f"ℹ️ Size: {size_kb:.0f} KB\n"
+                    f"📄 {count} chunks stored in Supabase\n\n"
+                    f"Use `/ask` to query the document."
         )
     except Exception as exc:
         logger.exception("Error processing file %s", file.filename)
         err_msg = str(exc)[:500]
-        await interaction.followup.send(f"❌ Error processing file:\n```\n{err_msg}\n```")
+        await msg.edit(
+            content=f"❌ **Error processing {file.filename}:**\n```\n{err_msg}\n```"
+        )
 
 
 # ---------------------------------------------------------------------------
