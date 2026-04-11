@@ -12,10 +12,7 @@ from telegram.ext import (
     Application,
     CommandHandler,
     ContextTypes,
-    MessageHandler,
-    filters,
 )
-from telegram.error import TelegramError
 
 from bot.helpers import EXTRACTION_PROMPT_TEMPLATE, format_sources, parse_pipe_table
 from config import settings
@@ -27,11 +24,7 @@ from services import (
     export_qa_history,
     format_storage_stats,
     get_storage_stats,
-    get_supported_extensions_str,
-    is_supported_file,
     list_indexed_files,
-    process_document,
-    upsert_chunks,
 )
 
 logger = logging.getLogger(__name__)
@@ -61,8 +54,7 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         r"/extract `<mô tả>` – Trích xuất data → Excel" + "\n"
         r"/export – Xuất lịch sử Q&A → Excel" + "\n"
         r"/files – Xem danh sách file đã index" + "\n"
-        r"/storage – Xem dung lượng Supabase hiện tại" + "\n\n"
-        r"💡 Hoặc gửi file PDF trực tiếp để tôi index\!",
+        r"/storage – Xem dung lượng Supabase hiện tại",
         parse_mode="MarkdownV2",
     )
 
@@ -73,65 +65,6 @@ async def ping_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         f"🏓 Pong!\nPython {sys.version.split()[0]} | {platform.system()}"
     )
-
-
-async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle document files sent directly to the bot."""
-    document = update.message.document
-    if not document:
-        return
-
-    filename = document.file_name or "unknown.txt"
-    if not is_supported_file(filename):
-        await update.message.reply_text(
-            f"⚠️ File không được hỗ trợ.\n"
-            f"Hỗ trợ: {get_supported_extensions_str()}"
-        )
-        return
-
-    msg = await update.message.reply_text(f"⏳ [1/3] Đang tải file {filename}...")
-
-    try:
-        tg_file = await document.get_file()
-        file_bytes = await tg_file.download_as_bytearray()
-        size_kb = len(file_bytes) / 1024
-        logger.info("Downloaded %s (%.0f KB)", filename, size_kb)
-
-        await msg.edit_text(f"⏳ [2/3] Đang xử lý văn bản từ {filename}...")
-        chunks = await asyncio.to_thread(process_document, bytes(file_bytes), filename)
-        logger.info("Processed %d chunks from %s", len(chunks), filename)
-        if not chunks:
-            await msg.edit_text(
-                f"⚠️ Không extract được text từ <b>{filename}</b>.\n"
-                f"Đảm bảo file có nội dung văn bản (không phải ảnh scan).",
-                parse_mode="HTML",
-            )
-            return
-
-        await msg.edit_text(
-            f"⏳ [3/3] Đang embed và lưu {len(chunks)} chunks lên Supabase...\n"
-            f"⏱ File lớn có thể mất vài phút (Gemini free giới hạn 100 req/phút)."
-        )
-        count = await asyncio.to_thread(upsert_chunks, chunks)
-        await msg.edit_text(
-            f"✅ <b>{filename}</b> đã index thành công!\n"
-            f"ℹ️ Kích thước: {size_kb:.0f} KB\n"
-            f"📄 {count} chunks lưu trên Supabase\n\n"
-            f"Dùng /ask để hỏi về tài liệu.",
-            parse_mode="HTML",
-        )
-    except Exception as exc:
-        logger.exception("Error processing file %s: %s", filename, exc)
-        err_msg = str(exc)[:500]
-        try:
-            await msg.edit_text(
-                f"❌ <b>Lỗi khi xử lý {filename}:</b>\n\n<code>{err_msg}</code>",
-                parse_mode="HTML",
-            )
-        except Exception:
-            await update.message.reply_text(
-                f"❌ Lỗi: <code>{err_msg}</code>", parse_mode="HTML"
-            )
 
 
 # ---------------------------------------------------------------------------
@@ -424,8 +357,6 @@ def main() -> None:
     app.add_handler(CommandHandler("files", files_cmd))
     app.add_handler(CommandHandler("delete", delete_cmd))
     app.add_handler(CommandHandler("storage", storage_cmd))
-    # Accept all document types (filtering is done inside handle_document)
-    app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     app.add_error_handler(error_handler)
 
     logger.info("Telegram bot starting...")
