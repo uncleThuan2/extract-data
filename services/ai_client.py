@@ -227,18 +227,34 @@ def chat_with_fallback(system: str, user: str) -> str:
 # ---------------------------------------------------------------------------
 
 def _embed_jina(texts: list[str]) -> list[list[float]]:
-    from openai import OpenAI
+    from openai import OpenAI, RateLimitError
 
     client = OpenAI(api_key=settings.JINA_API_KEY, base_url="https://api.jina.ai/v1")
     embeddings: list[list[float]] = []
-    for i in range(0, len(texts), 2048):
-        batch = texts[i : i + 2048]
-        resp = client.embeddings.create(
-            model=settings.JINA_EMBEDDING_MODEL,
-            input=batch,
-            extra_body={"dimensions": settings.EMBEDDING_DIMENSION},
-        )
-        embeddings.extend(item.embedding for item in resp.data)
+    # Small batch size to stay within Jina's 10,000 token/min rate limit.
+    batch_size = 20
+    for i in range(0, len(texts), batch_size):
+        batch = texts[i : i + batch_size]
+        delay = 60.0
+        for attempt in range(5):
+            try:
+                resp = client.embeddings.create(
+                    model=settings.JINA_EMBEDDING_MODEL,
+                    input=batch,
+                    extra_body={"dimensions": settings.EMBEDDING_DIMENSION},
+                )
+                embeddings.extend(item.embedding for item in resp.data)
+                break
+            except RateLimitError as exc:
+                wait = _parse_retry_after(exc, default=delay)
+                logger.warning("Jina rate limit hit (attempt %d/5), retrying in %.1fs: %s", attempt + 1, wait, exc)
+                time.sleep(wait)
+                delay = min(delay * 2, 60.0)
+        else:
+            raise RuntimeError("Jina embedding rate limit exceeded after 5 retries.")
+        # Brief pause between batches to avoid bursting over the token/min limit.
+        if i + batch_size < len(texts):
+            time.sleep(1.0)
     return embeddings
 
 
