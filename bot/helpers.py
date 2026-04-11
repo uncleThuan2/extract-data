@@ -70,16 +70,18 @@ def parse_pipe_table(text: str) -> tuple[list[str], list[dict]]:
 
 
 EXTRACTION_PROMPT_TEMPLATE = (
-    "Extract the following data from the documents.\n\n"
+    "Extract the following data from the documents and present it as a structured table.\n\n"
     "Data to extract: {prompt}\n\n"
     "Rules:\n"
+    "- Choose column names that best fit the extracted data and the user's question\n"
+    "- Always include a 'Page' or 'Source' column with the page number(s) where the data was found\n"
     "- Output ONLY a pipe-separated table, no other text before or after\n"
-    "- First line must be the column headers separated by | (example: Name | Value | Unit)\n"
+    "- First line must be the column headers separated by | (example: Name | Value | Page)\n"
     "- Each subsequent line is one data row, values separated by |\n"
-    "- Do NOT use markdown bold (**), do NOT number the rows\n"
-    "- If a field is unknown write N/A\n"
-    "- Example output format:\n"
-    "  Field | Description | Type\n"
-    "  Health status | Self-reported health scale | Scale\n"
-    "  Age | Age in years | Numeric"
+    "- Do NOT use markdown bold (**), do NOT number the rows, do NOT use N/A\n"
+    "- Leave a cell empty if the value is unknown, do not write N/A\n"
+    "- Example output:\n"
+    "  Survey Name | Waves | Purpose | Page\n"
+    "  Health Survey | 3-4, 6-11 | Measure health status | 45\n"
+    "  Retirement Survey | 17-26 | Track retirement trends | 52"
 )
