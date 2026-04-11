@@ -79,6 +79,35 @@ _GEMINI_EMBED_BATCH = 100   # max items per embed_content call
 _GEMINI_MAX_RETRIES = 5
 _GEMINI_RETRY_DEFAULT = 35  # seconds to wait if not specified in error
 
+_gemini_key_index = 0  # current key index for rotation
+
+
+def _is_daily_quota_exhausted(exc: Exception) -> bool:
+    """Return True if the 429 is a daily quota exhaustion (limit: 0), not just RPM throttle."""
+    return "PerDay" in str(exc) or "limit: 0" in str(exc)
+
+
+def _next_gemini_key() -> str | None:
+    """Rotate to the next available Gemini API key. Returns None if all keys exhausted."""
+    global _gemini_key_index
+    keys = settings.gemini_api_keys
+    _gemini_key_index += 1
+    if _gemini_key_index < len(keys):
+        logger.warning(
+            "Rotating to Gemini API key #%d/%d",
+            _gemini_key_index + 1, len(keys),
+        )
+        return keys[_gemini_key_index]
+    logger.error("All %d Gemini API key(s) exhausted for today.", len(keys))
+    return None
+
+
+def _current_gemini_key() -> str:
+    keys = settings.gemini_api_keys
+    if not keys:
+        raise ValueError("No GEMINI_API_KEY configured.")
+    return keys[min(_gemini_key_index, len(keys) - 1)]
+
 
 def _parse_retry_after(exc: Exception) -> float:
     """Extract 'retry in X.Xs' from Gemini 429 error message."""
@@ -93,7 +122,6 @@ def _gemini_embed(texts: list[str]) -> list[list[float]]:
     from google.genai import types
     from google.genai.errors import ClientError
 
-    client = genai.Client(api_key=settings.GEMINI_API_KEY)
     config = types.EmbedContentConfig(
         output_dimensionality=settings.EMBEDDING_DIMENSION,
     )
@@ -102,6 +130,7 @@ def _gemini_embed(texts: list[str]) -> list[list[float]]:
         batch = texts[i : i + _GEMINI_EMBED_BATCH]
         for attempt in range(1, _GEMINI_MAX_RETRIES + 1):
             try:
+                client = genai.Client(api_key=_current_gemini_key())
                 response = client.models.embed_content(
                     model=settings.GEMINI_EMBEDDING_MODEL,
                     contents=batch,
@@ -110,17 +139,25 @@ def _gemini_embed(texts: list[str]) -> list[list[float]]:
                 embeddings.extend(e.values for e in response.embeddings)
                 break
             except ClientError as exc:
-                if exc.code == 429 and attempt < _GEMINI_MAX_RETRIES:
-                    wait = _parse_retry_after(exc)
-                    logger.warning(
-                        "Gemini rate limit hit (batch %d/%d). Waiting %.0fs before retry %d/%d...",
-                        i // _GEMINI_EMBED_BATCH + 1,
-                        (len(texts) - 1) // _GEMINI_EMBED_BATCH + 1,
-                        wait,
-                        attempt,
-                        _GEMINI_MAX_RETRIES,
-                    )
-                    time.sleep(wait)
+                if exc.code == 429:
+                    if _is_daily_quota_exhausted(exc):
+                        next_key = _next_gemini_key()
+                        if next_key is None:
+                            raise
+                        continue  # retry same batch with new key
+                    if attempt < _GEMINI_MAX_RETRIES:
+                        wait = _parse_retry_after(exc)
+                        logger.warning(
+                            "Gemini rate limit hit (batch %d/%d). Waiting %.0fs before retry %d/%d...",
+                            i // _GEMINI_EMBED_BATCH + 1,
+                            (len(texts) - 1) // _GEMINI_EMBED_BATCH + 1,
+                            wait,
+                            attempt,
+                            _GEMINI_MAX_RETRIES,
+                        )
+                        time.sleep(wait)
+                    else:
+                        raise
                 else:
                     raise
     return embeddings
@@ -129,18 +166,40 @@ def _gemini_embed(texts: list[str]) -> list[list[float]]:
 def _gemini_chat(system: str, user: str) -> str:
     from google import genai
     from google.genai import types
+    from google.genai.errors import ClientError
 
-    client = genai.Client(api_key=settings.GEMINI_API_KEY)
-    response = client.models.generate_content(
-        model=settings.LLM_MODEL,
-        contents=user,
-        config=types.GenerateContentConfig(
-            system_instruction=system,
-            temperature=0.1,
-            max_output_tokens=2000,
-        ),
-    )
-    return response.text or ""
+    for attempt in range(1, _GEMINI_MAX_RETRIES + 1):
+        try:
+            client = genai.Client(api_key=_current_gemini_key())
+            response = client.models.generate_content(
+                model=settings.LLM_MODEL,
+                contents=user,
+                config=types.GenerateContentConfig(
+                    system_instruction=system,
+                    temperature=0.1,
+                    max_output_tokens=2000,
+                ),
+            )
+            return response.text or ""
+        except ClientError as exc:
+            if exc.code == 429:
+                if _is_daily_quota_exhausted(exc):
+                    next_key = _next_gemini_key()
+                    if next_key is None:
+                        raise
+                    continue  # retry with new key
+                if attempt < _GEMINI_MAX_RETRIES:
+                    wait = _parse_retry_after(exc)
+                    logger.warning(
+                        "Gemini chat rate limit hit. Waiting %.0fs before retry %d/%d...",
+                        wait, attempt, _GEMINI_MAX_RETRIES,
+                    )
+                    time.sleep(wait)
+                else:
+                    raise
+            else:
+                raise
+    raise RuntimeError("Gemini chat failed after all retries")
 
 
 # ---------------------------------------------------------------------------

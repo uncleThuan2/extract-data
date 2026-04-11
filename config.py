@@ -25,8 +25,24 @@ class Settings:
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
 
     # --- Google Gemini ---
+    # Supports multiple keys for rotation: GEMINI_API_KEY, GEMINI_API_KEY_2, GEMINI_API_KEY_3...
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
     GEMINI_EMBEDDING_MODEL: str = os.getenv("GEMINI_EMBEDDING_MODEL", "gemini-embedding-001")
+
+    @property
+    def gemini_api_keys(self) -> list[str]:
+        """Return all configured Gemini API keys (for rotation)."""
+        keys = []
+        if self.GEMINI_API_KEY:
+            keys.append(self.GEMINI_API_KEY)
+        i = 2
+        while True:
+            key = os.getenv(f"GEMINI_API_KEY_{i}", "")
+            if not key:
+                break
+            keys.append(key)
+            i += 1
+        return keys
 
     # --- Jina AI (free embedding, no RPM limit, 1M tokens/month) ---
     # Get free key at: https://jina.ai/embeddings
