@@ -87,7 +87,19 @@ def _extract_docx(data: bytes, filename: str) -> list[dict]:
 
 
 def _extract_xlsx(data: bytes, filename: str) -> list[dict]:
+    import inspect
     from openpyxl import load_workbook
+    from openpyxl.worksheet.properties import WorksheetProperties
+
+    # Some Excel files contain attributes (e.g. 'synchVertical') not recognised
+    # by this version of openpyxl.  Patch __init__ to silently drop unknowns.
+    _orig_wp_init = WorksheetProperties.__init__
+    _valid_wp_params = set(inspect.signature(_orig_wp_init).parameters) - {"self"}
+
+    def _tolerant_wp_init(self, **kwargs):
+        _orig_wp_init(self, **{k: v for k, v in kwargs.items() if k in _valid_wp_params})
+
+    WorksheetProperties.__init__ = _tolerant_wp_init
 
     wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
     pages = []
@@ -105,6 +117,8 @@ def _extract_xlsx(data: bytes, filename: str) -> list[dict]:
                 "page_number": idx,
                 "filename": filename,
             })
+
+    WorksheetProperties.__init__ = _orig_wp_init  # restore after use
     return pages
 
 
