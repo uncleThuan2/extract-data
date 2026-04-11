@@ -67,7 +67,14 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
-async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def ping_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Quick health check – confirms bot is alive and responding."""
+    import platform, sys
+    await update.message.reply_text(
+        f"🏓 Pong!\nPython {sys.version.split()[0]} | {platform.system()}"
+    )
+
+
     """Handle document files sent directly to the bot."""
     document = update.message.document
     if not document:
@@ -169,11 +176,17 @@ async def ask_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 # /export
 # ---------------------------------------------------------------------------
 async def export_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.effective_chat.id if update.effective_chat else "unknown"
+    logger.info("CMD /export called by chat_id=%s", chat_id)
     msg = None
     try:
         history = qa_history.get(update.effective_chat.id, [])
+        logger.info("CMD /export history_len=%d for chat_id=%s", len(history), chat_id)
         if not history:
-            await _safe_reply(update, "📭 Chưa có lịch sử Q&A. Dùng /ask trước.")
+            await _safe_reply(update,
+                "📭 Chưa có lịch sử Q&A.\n\n"
+                "Dùng /ask <câu hỏi> trước, rồi /export để xuất Excel."
+            )
             return
 
         msg = await update.message.reply_text("📊 Đang tạo file Excel...")
@@ -184,7 +197,7 @@ async def export_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             caption=f"📊 Exported {len(history)} Q&A entries.",
         )
         try:
-            await msg.delete()
+            await msg.edit_text(f"✅ Xuất xong – {len(history)} Q&A entries.")
         except Exception:
             pass
     except Exception as exc:
@@ -204,6 +217,8 @@ async def export_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 # /extract
 # ---------------------------------------------------------------------------
 async def extract_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.effective_chat.id if update.effective_chat else "unknown"
+    logger.info("CMD /extract called by chat_id=%s args=%s", chat_id, context.args)
     msg = None
     try:
         prompt = " ".join(context.args) if context.args else ""
@@ -235,7 +250,7 @@ async def extract_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             caption=f"📊 Extracted {len(rows)} rows.",
         )
         try:
-            await msg.delete()
+            await msg.edit_text(f"✅ Trích xuất xong – {len(rows)} dòng dữ liệu.")
         except Exception:
             pass
     except Exception as exc:
@@ -363,10 +378,16 @@ def main() -> None:
         level=logging.INFO,
         format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
     )
-    app = Application.builder().token(settings.TELEGRAM_BOT_TOKEN).build()
+    app = (
+        Application.builder()
+        .token(settings.TELEGRAM_BOT_TOKEN)
+        .concurrent_updates(True)
+        .build()
+    )
 
     app.add_handler(CommandHandler("start", start_cmd))
     app.add_handler(CommandHandler("help", start_cmd))
+    app.add_handler(CommandHandler("ping", ping_cmd))
     app.add_handler(CommandHandler("ask", ask_cmd))
     app.add_handler(CommandHandler("export", export_cmd))
     app.add_handler(CommandHandler("extract", extract_cmd))
