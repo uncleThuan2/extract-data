@@ -119,38 +119,34 @@ def search_similar(query: str, top_k: int = 5) -> list[dict]:
 
 def list_indexed_files() -> list[str]:
     """List all unique filenames that have been indexed."""
-    collection = get_collection()
-    zero_vec = [0.0] * settings.EMBEDDING_DIMENSION
-    results = collection.query(
-        data=zero_vec,
-        limit=10000,
-        include_metadata=True,
-    )
-    filenames = set()
-    for item in results:
-        _, _, metadata = item
-        if metadata and "filename" in metadata:
-            filenames.add(metadata["filename"])
-    return sorted(filenames)
+    engine = create_engine(settings.SUPABASE_DB_URL)
+    table = f'vecs."{settings.COLLECTION_NAME}"'
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text(f"SELECT DISTINCT metadata->>'filename' AS filename FROM {table} WHERE metadata->>'filename' IS NOT NULL")
+            ).fetchall()
+        return sorted(r[0] for r in rows)
+    finally:
+        engine.dispose()
 
 
 def delete_file(filename: str) -> int:
     """Delete all chunks belonging to a given filename. Returns number of chunks deleted."""
-    collection = get_collection()
-    zero_vec = [0.0] * settings.EMBEDDING_DIMENSION
-    results = collection.query(
-        data=zero_vec,
-        limit=10000,
-        include_metadata=True,
-    )
-
-    ids_to_delete = []
-    for item in results:
-        doc_id, _, metadata = item
-        if metadata and metadata.get("filename") == filename:
-            ids_to_delete.append(doc_id)
+    engine = create_engine(settings.SUPABASE_DB_URL)
+    table = f'vecs."{settings.COLLECTION_NAME}"'
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text(f"SELECT id FROM {table} WHERE metadata->>'filename' = :fn"),
+                {"fn": filename},
+            ).fetchall()
+            ids_to_delete = [r[0] for r in rows]
+    finally:
+        engine.dispose()
 
     if ids_to_delete:
+        collection = get_collection()
         collection.delete(ids=ids_to_delete)
         logger.info("Deleted %d chunks for file '%s'", len(ids_to_delete), filename)
 
