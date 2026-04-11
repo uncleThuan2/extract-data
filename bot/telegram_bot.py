@@ -403,15 +403,27 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
         await _safe_reply(update, f"❌ Lỗi không mong muốn:\n{err}")
 
 
-async def _debug_all_updates(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Log every incoming update – temporary diagnostic middleware."""
+# Map command text → handler function (for CODE-entity fallback)
+_COMMAND_MAP: dict[str, any] = {}  # populated after functions are defined
+
+
+async def _handle_code_commands(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Fallback: handle messages where Telegram sent a command with CODE entity
+    instead of BOT_COMMAND (happens when user taps a copied code block)."""
     msg = update.message
-    if msg:
-        text = (msg.text or "")[:80]
-        logger.info("UPDATE_DEBUG chat=%s text=%r entities=%s",
-                    update.effective_chat.id if update.effective_chat else "?",
-                    text,
-                    msg.entities)
+    if not msg or not msg.text:
+        return
+    text = msg.text.strip()
+    if not text.startswith("/"):
+        return
+    # Extract command and args
+    parts = text.split(maxsplit=1)
+    cmd = parts[0].lstrip("/").lower().split("@")[0]  # strip @botname
+    context.args = parts[1].split() if len(parts) > 1 else []
+    handler_fn = _COMMAND_MAP.get(cmd)
+    if handler_fn:
+        logger.info("CODE-entity command re-routed: /%s args=%s", cmd, context.args)
+        await handler_fn(update, context)
 
 
 # ---------------------------------------------------------------------------
@@ -428,9 +440,12 @@ def main() -> None:
         .build()
     )
 
-    # ── Diagnostic: log every incoming update (Group -1 = runs first) ──
-    from telegram.ext import TypeHandler
-    app.add_handler(TypeHandler(Update, _debug_all_updates), group=-1)
+    # Populate CODE-entity fallback map
+    _COMMAND_MAP.update({
+        "start": start_cmd, "help": start_cmd, "ping": ping_cmd,
+        "ask": ask_cmd, "export": export_cmd, "extract": extract_cmd,
+        "files": files_cmd, "delete": delete_cmd, "storage": storage_cmd,
+    })
 
     app.add_handler(CommandHandler("start", start_cmd))
     app.add_handler(CommandHandler("help", start_cmd))
@@ -442,6 +457,8 @@ def main() -> None:
     app.add_handler(CommandHandler("delete", delete_cmd))
     app.add_handler(CommandHandler("storage", storage_cmd))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
+    # Fallback: handle commands that Telegram sent with CODE entity instead of BOT_COMMAND
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _handle_code_commands))
     app.add_error_handler(error_handler)
 
     logger.info("Telegram bot starting...")
