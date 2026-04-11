@@ -15,6 +15,7 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
+from telegram.error import TelegramError
 
 from bot.helpers import EXTRACTION_PROMPT_TEMPLATE, format_sources, parse_pipe_table
 from config import settings
@@ -37,6 +38,14 @@ logger = logging.getLogger(__name__)
 
 qa_history: dict[int, list[QAResult]] = defaultdict(list)
 MAX_TELEGRAM_MSG = 4000
+
+
+async def _safe_reply(update: Update, text: str, **kwargs) -> None:
+    """Send a reply, never raising – last-resort fallback."""
+    try:
+        await update.message.reply_text(text, **kwargs)
+    except Exception as e:
+        logger.error("Failed to send reply to user: %s", e)
 
 
 # ---------------------------------------------------------------------------
@@ -160,13 +169,14 @@ async def ask_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 # /export
 # ---------------------------------------------------------------------------
 async def export_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    history = qa_history.get(update.effective_chat.id, [])
-    if not history:
-        await update.message.reply_text("📭 Chưa có lịch sử Q&A. Dùng /ask trước.")
-        return
-
-    msg = await update.message.reply_text("📊 Đang tạo file Excel...")
+    msg = None
     try:
+        history = qa_history.get(update.effective_chat.id, [])
+        if not history:
+            await _safe_reply(update, "📭 Chưa có lịch sử Q&A. Dùng /ask trước.")
+            return
+
+        msg = await update.message.reply_text("📊 Đang tạo file Excel...")
         excel_bytes = await asyncio.to_thread(export_qa_history, history)
         await update.message.reply_document(
             document=io.BytesIO(excel_bytes),
@@ -177,38 +187,45 @@ async def export_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             await msg.delete()
         except Exception:
             pass
-    except Exception:
+    except Exception as exc:
         logger.exception("Error exporting Excel")
-        try:
-            await msg.edit_text("❌ Lỗi khi xuất Excel.")
-        except Exception:
-            await update.message.reply_text("❌ Lỗi khi xuất Excel.")
+        err = str(exc)[:300]
+        text = f"❌ Lỗi khi xuất Excel:\n<code>{err}</code>"
+        if msg:
+            try:
+                await msg.edit_text(text, parse_mode="HTML")
+            except Exception:
+                await _safe_reply(update, f"❌ Lỗi: {err}")
+        else:
+            await _safe_reply(update, f"❌ Lỗi: {err}")
 
 
 # ---------------------------------------------------------------------------
 # /extract
 # ---------------------------------------------------------------------------
 async def extract_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    prompt = " ".join(context.args) if context.args else ""
-    if not prompt:
-        await update.message.reply_text(
-            "📋 Dùng: /extract <mô tả data cần trích>\n\n"
-            "Ví dụ: /extract tất cả tên công ty và địa chỉ"
-        )
-        return
-
-    msg = await update.message.reply_text("⏳ Đang trích xuất data...")
+    msg = None
     try:
+        prompt = " ".join(context.args) if context.args else ""
+        if not prompt:
+            await _safe_reply(update,
+                "📋 Dùng: /extract <mô tả data cần trích>\n\n"
+                "Ví dụ: /extract tất cả tên công ty và địa chỉ"
+            )
+            return
+
+        msg = await update.message.reply_text("⏳ Đang trích xuất data...")
+
         extraction_prompt = EXTRACTION_PROMPT_TEMPLATE.format(prompt=prompt)
         result = await asyncio.to_thread(ask, extraction_prompt, 10)
 
         headers, rows = parse_pipe_table(result.answer)
         if not rows:
-            text = f"📝 {result.answer}"
+            text = f"📝 {result.answer[:MAX_TELEGRAM_MSG]}"
             try:
                 await msg.edit_text(text)
             except Exception:
-                await update.message.reply_text(text)
+                await _safe_reply(update, text)
             return
 
         excel_bytes = await asyncio.to_thread(export_extracted_data, rows, headers)
@@ -221,12 +238,17 @@ async def extract_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             await msg.delete()
         except Exception:
             pass
-    except Exception:
+    except Exception as exc:
         logger.exception("Error extracting data")
-        try:
-            await msg.edit_text("❌ Lỗi khi trích xuất data.")
-        except Exception:
-            await update.message.reply_text("❌ Lỗi khi trích xuất data.")
+        err = str(exc)[:300]
+        text = f"❌ Lỗi khi trích xuất data:\n<code>{err}</code>"
+        if msg:
+            try:
+                await msg.edit_text(text, parse_mode="HTML")
+            except Exception:
+                await _safe_reply(update, f"❌ Lỗi: {err}")
+        else:
+            await _safe_reply(update, f"❌ Lỗi: {err}")
 
 
 # ---------------------------------------------------------------------------
@@ -296,22 +318,41 @@ async def delete_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 # /storage
 # ---------------------------------------------------------------------------
 async def storage_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    msg = await update.message.reply_text("📊 Đang kiểm tra dung lượng...")
+    msg = None
     try:
+        msg = await update.message.reply_text("📊 Đang kiểm tra dung lượng...")
         stats = await asyncio.to_thread(get_storage_stats)
         text = format_storage_stats(stats, bold="b")
         try:
             await msg.edit_text(text, parse_mode="HTML")
         except Exception:
-            # Fallback: send as plain text if HTML rendering fails
             plain = format_storage_stats(stats, bold="")
-            await msg.edit_text(plain)
-    except Exception:
+            try:
+                await msg.edit_text(plain)
+            except Exception:
+                await _safe_reply(update, plain)
+    except Exception as exc:
         logger.exception("Error fetching storage stats")
-        try:
-            await msg.edit_text("❌ Lỗi khi lấy thông tin dung lượng. Kiểm tra logs.")
-        except Exception:
-            await update.message.reply_text("❌ Lỗi khi lấy thông tin dung lượng.")
+        err = str(exc)[:300]
+        text = f"❌ Lỗi khi lấy dung lượng:\n<code>{err}</code>"
+        if msg:
+            try:
+                await msg.edit_text(text, parse_mode="HTML")
+            except Exception:
+                await _safe_reply(update, f"❌ Lỗi: {err}")
+        else:
+            await _safe_reply(update, f"❌ Lỗi: {err}")
+
+
+# ---------------------------------------------------------------------------
+# Global error handler
+# ---------------------------------------------------------------------------
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Catch all unhandled exceptions and notify the user."""
+    logger.error("Unhandled exception", exc_info=context.error)
+    if isinstance(update, Update) and update.message:
+        err = str(context.error)[:300]
+        await _safe_reply(update, f"❌ Lỗi không mong muốn:\n{err}")
 
 
 # ---------------------------------------------------------------------------
@@ -334,6 +375,7 @@ def main() -> None:
     app.add_handler(CommandHandler("storage", storage_cmd))
     # Accept all document types (filtering is done inside handle_document)
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
+    app.add_error_handler(error_handler)
 
     logger.info("Telegram bot starting...")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
