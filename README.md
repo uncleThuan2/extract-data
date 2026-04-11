@@ -1,7 +1,7 @@
 # Document Q&A Bot (Telegram)
 
-Bot hỏi đáp tài liệu với AI, hỗ trợ xuất Excel. Data lưu trên **Supabase** (free).
-Chạy trên **Telegram**.
+Bot Telegram hỏi đáp tài liệu với AI, hỗ trợ trích xuất data và xuất Excel.  
+Data lưu trên **Supabase pgvector** (free). Chạy trên **Render.com** (free).
 
 ## Supported File Types
 
@@ -21,162 +21,184 @@ Chạy trên **Telegram**.
 ## Kiến trúc
 
 ```
-Document → Extract Text → Chunk → Embed (OpenAI) → Store (Supabase pgvector)
-(PDF/DOCX/TXT/CSV/...)                                      ↓
-Telegram → Embed Query → Search Similar → GPT-4o-mini → Answer
-  "/ask"                                               ↓
-                                             "/export" → Excel file
+[Telegram bot]  gửi file  →  upload_service.py
+                               ├─ Kiểm tra duplicate (filename đã index chưa?)
+                               ├─ Extract text   (document_processor.py)
+                               ├─ Chunk text     (RecursiveCharacterTextSplitter)
+                               └─ Embed + Store  (Jina AI → Supabase pgvector)
+
+[Telegram bot]  /ask  →  qa_engine.py
+                           ├─ Embed query  (Jina AI)
+                           ├─ Search top-K chunks  (Supabase pgvector)
+                           └─ Chat  (Groq → Gemini fallback)  →  Answer
+
+[Google Colab]  colab_upload.ipynb  →  Upload hàng loạt file ngoài bot
 ```
+
+## AI Providers
+
+| Provider | Dùng cho | Free tier |
+|---------|----------|-----------|
+| **Jina AI** | Embedding (hardcoded) | 1M tokens/tháng, không giới hạn RPM |
+| **Groq** | Chat (primary) | 14,400 req/ngày — `llama-3.1-8b-instant` |
+| **Gemini** | Chat (fallback) | 1,500 req/ngày — `gemini-2.0-flash-lite` |
+
+Thứ tự fallback cấu hình qua `CHAT_PROVIDERS=groq,gemini`. Khi provider hết quota ngày, tự động chuyển sang provider tiếp theo.
+
 
 ## Yêu cầu
 
-1. **Python 3.11+**
-2. **OpenAI API Key** – [platform.openai.com](https://platform.openai.com)
-3. **Telegram Bot Token** – [@BotFather](https://t.me/BotFather)
-4. **Supabase Account** (free) – [supabase.com](https://supabase.com)
+| Thứ | Service | Link | Bắt buộc? |
+|-----|---------|------|-----------|
+| 1 | **Python 3.11+** | — | ✅ |
+| 2 | **Telegram Bot Token** | [@BotFather](https://t.me/BotFather) | ✅ |
+| 3 | **Supabase** (free) | [supabase.com](https://supabase.com) | ✅ |
+| 4 | **Jina AI API Key** | [jina.ai/embeddings](https://jina.ai/embeddings) | ✅ |
+| 5 | **Groq API Key** | [console.groq.com](https://console.groq.com) | ✅ (primary chat) |
+| 6 | **Gemini API Key** | [aistudio.google.com](https://aistudio.google.com) | Tùy chọn (fallback) |
 
 ## Setup
 
-### 1. Supabase (Free Cloud Database)
+### 1. Supabase
 
-1. Tạo account tại [supabase.com](https://supabase.com)
-2. Tạo project mới (chọn region gần bạn)
-3. Vào **SQL Editor** → chạy nội dung file `setup_supabase.sql`
-4. Lấy thông tin từ **Settings → API**:
+1. Tạo account tại [supabase.com](https://supabase.com) → tạo project mới
+2. Vào **SQL Editor** → chạy nội dung file `setup_supabase.sql`
+3. Lấy thông tin từ **Settings → API**:
    - `SUPABASE_URL` = Project URL
    - `SUPABASE_KEY` = anon public key
-   - `SUPABASE_DB_URL` = **Settings → Database → Connection string (URI)** (thay `[YOUR-PASSWORD]` bằng database password)
+   - `SUPABASE_DB_URL` = **Settings → Database → Connection string (URI)**  
+     _(thay `[YOUR-PASSWORD]` bằng database password)_
 
 ### 2. Tạo Telegram Bot
 
-1. Mở Telegram, tìm **@BotFather**
-2. Gửi `/newbot` → đặt tên hiển thị → đặt username (phải kết thúc bằng `bot`, VD: `my_qa_bot`)
-3. Copy token BotFather trả về → dán vào `TELEGRAM_BOT_TOKEN` trong `.env`
-4. (Tùy chọn) Cấu hình thêm với BotFather:
-   - `/setdescription` – mô tả bot hiện ở màn hình welcome
-   - `/setcommands` – hiển thị gợi ý commands trong menu
+1. Mở Telegram → tìm **@BotFather** → gửi `/newbot`
+2. Copy token → dán vào `TELEGRAM_BOT_TOKEN` trong `.env`
+3. (Tùy chọn) Cấu hình commands qua `/setcommands`:
 
    ```
-   ask - Hỏi về tài liệu đã upload
+   ask - Hỏi về tài liệu đã index
    extract - Trích xuất data có cấu trúc → Excel
    export - Xuất lịch sử Q&A ra Excel
    files - Xem danh sách file đã index
    delete - Xóa file khỏi vector store theo tên
    storage - Xem dung lượng Supabase
+   ping - Kiểm tra bot còn sống không
    ```
 
-#### Thêm Telegram Bot vào Group / Chia sẻ
+#### Thêm bot vào Group
 
-- **Chat riêng (private):** Tìm `@your_bot_username` trong Telegram → nhấn **Start**
-- **Thêm vào Group:**
-  1. Mở group chat → nhấn tên group
-  2. **Add Members** → tìm `@your_bot_username` → Add
-  3. Gửi `/start` trong group để kích hoạt
-- **Chia sẻ link:** Gửi link `https://t.me/your_bot_username` cho người khác, họ nhấn vào là chat được ngay
-- **Lưu ý Group:** Mặc định bot không đọc được tin nhắn thường trong group (privacy mode). Chỉ đọc được commands (`/ask`, `/upload`...). Nếu muốn bot đọc mọi tin nhắn: vào BotFather → `/mybots` → chọn bot → **Bot Settings → Group Privacy → Turn off**
+- **Chat riêng:** Tìm `@your_bot_username` → nhấn **Start**
+- **Group:** Add Members → tìm username → Add → gửi `/start`
+- **Link chia sẻ:** `https://t.me/your_bot_username`
 
-### 3. Install & Run
+### 3. Cài đặt và chạy local
 
 ```bash
-# Clone / copy project
-cd pdf-qa-discord-bot
+git clone https://github.com/your/repo.git
+cd extract-data
 
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # macOS/Linux
+python -m venv .venv
+.venv\Scripts\activate        # Windows
+# source .venv/bin/activate   # macOS/Linux
 
-# Install dependencies
 pip install -r requirements.txt
 
-# Copy env file and fill in your keys
 cp .env.example .env
-# Edit .env with your actual keys
+# Điền các API keys vào .env
 
-# Run Telegram bot
-python run.py
+python run.py              # chạy bot + health server
+python run.py --no-health  # chỉ chạy bot (local dev)
 ```
 
 ## Commands
 
 | Command | Mô tả |
 |---------|-------|
-| `/ask <câu hỏi>` | Hỏi về tài liệu |
-| `/extract <mô tả>` | Trích xuất data → Excel |
-| `/export` | Xuất lịch sử Q&A → Excel |
-| `/files` | Xem danh sách + số thứ tự file đã index |
+| `/ask <câu hỏi>` | Hỏi về tài liệu đã index |
+| `/extract <mô tả>` | Trích xuất data có cấu trúc → Excel |
+| `/export` | Xuất toàn bộ lịch sử Q&A → Excel |
+| `/files` | Xem danh sách file đã index |
 | `/delete <tên file>` | Xóa file khỏi vector store |
-| `/storage` | Dung lượng Supabase |
+| `/storage` | Xem dung lượng Supabase |
+| `/ping` | Kiểm tra bot đang chạy |
 
+> Gửi file PDF/DOCX/XLSX/CSV/TXT trực tiếp vào chat để index.  
+> Bot sẽ báo lỗi nếu file đó đã được index rồi.
+
+## Upload hàng loạt (Google Colab)
+
+Dùng `colab_upload.ipynb` để upload nhiều file cùng lúc mà không cần qua bot:
+
+1. Mở notebook trong [Google Colab](https://colab.research.google.com)
+2. Điền `JINA_API_KEY`, `SUPABASE_DB_URL` vào cell **Cấu hình**
+3. Chạy từng cell theo thứ tự: Upload → Extract → Embed → Insert
+4. Notebook tự kiểm tra duplicate trước khi insert
 
 ## Ví dụ sử dụng
 
 ```
-Gửi file PDF/DOCX/TXT/CSV trực tiếp vào chat để index
+# Upload file qua Telegram (gửi file trực tiếp vào chat)
+# Hoặc dùng colab_upload.ipynb để upload hàng loạt
+
 /ask Tóm tắt nội dung chính của tài liệu
 /ask Liệt kê tất cả các điều khoản về thanh toán
-/extract tất cả tên công ty và địa chỉ
-/export          → Download Excel with all Q&A history
-/storage         → Xem dung lượng
+/extract tất cả tên công ty và địa chỉ → tải file Excel
+/export    → Xuất toàn bộ Q&A ra Excel
+/storage   → Xem dung lượng Supabase đang dùng
+/files     → Xem danh sách file đã index
 ```
 
-## Chi phí
+## Chi phí ước tính
 
 | Service | Cost |
 |---------|------|
-| Supabase | **Free** (500MB DB, 1GB storage) |
+| Supabase | **Free** (500MB DB) |
 | Telegram Bot | **Free** |
-| OpenAI Embedding | ~$0.02 / 1M tokens (~100 page PDF ≈ $0.01) |
-| OpenAI GPT-4o-mini | ~$0.15 / 1M input tokens (mỗi câu hỏi ~$0.001) |
+| Jina AI Embedding | **Free** (1M tokens/tháng) |
+| Groq Chat | **Free** (14,400 req/ngày) |
+| Gemini Chat (fallback) | **Free** (1,500 req/ngày) |
 
-**→ Tổng chi phí cho 100 trang PDF + 100 câu hỏi ≈ $0.10 - $0.20**
+**→ Tổng chi phí: $0/tháng cho hầu hết use case**
 
-## Ai cũng truy cập được?
+## Deploy lên Render.com (Free)
 
-Data lưu trên Supabase cloud. Để cho người khác truy cập:
-
-1. **Qua Telegram:** Thêm bot vào group, ai trong group cũng dùng `/ask` được
-2. **Qua Supabase REST API**: Uncomment phần view trong `setup_supabase.sql`, người khác query qua:
-   ```
-   GET https://your-project.supabase.co/rest/v1/pdf_search_documents
-   Header: apikey: your-anon-key
-   ```
-3. **Build thêm web UI**: Dùng Supabase JS client kết nối trực tiếp
-
-## Deploy (Free)
-
-### Option A – Render.com (Web Service free + keep-alive trick)
-
-Bot có sẵn health server tại `GET /health`. Kết hợp với **UptimeRobot** free để không bao giờ sleep:
+Bot có health server tại `GET /health`. Kết hợp **UptimeRobot** để không bao giờ sleep:
 
 1. Push code lên GitHub
-2. Vào [render.com](https://render.com) → **New → Web Service** (không phải Background Worker)
-3. Connect GitHub repo
-4. Cấu hình:
+2. Vào [render.com](https://render.com) → **New → Web Service**
+3. Connect GitHub repo, cấu hình:
    - **Build Command:** `pip install -r requirements.txt`
    - **Start Command:** `python run.py`
-   - **Environment Variables:** điền đủ keys từ `.env.example`
-5. Deploy xong → copy URL của service (dạng `https://your-bot.onrender.com`)
-6. Vào [uptimerobot.com](https://uptimerobot.com) (free) → **New Monitor**:
-   - Type: `HTTP(s)`
-   - URL: `https://your-bot.onrender.com/health`
-   - Interval: **5 minutes**
-7. Bot sẽ không bao giờ sleep vì cứ 5 phút có 1 ping!
+4. Vào tab **Environment** → thêm tất cả biến từ `.env.example`
+5. Deploy xong → copy URL (`https://your-bot.onrender.com`)
+6. Vào [uptimerobot.com](https://uptimerobot.com) → **New Monitor**:
+   - Type: `HTTP(s)` | URL: `https://your-bot.onrender.com/health` | Interval: **5 phút**
 
-### Option B – Railway.app
+Bot sẽ không bao giờ sleep vì UptimeRobot ping mỗi 5 phút.
 
-- Free $5 credit/tháng (~500 giờ chạy)
-- Start Command: `python run.py`
-- Sau khi hết credit tháng đó bot tắt, đầu tháng sau tự động bật lại
+### Environment Variables cần thiết
 
-### Option C – Oracle Cloud Always Free (tốt nhất)
+```env
+TELEGRAM_BOT_TOKEN=...
+JINA_API_KEY=...
+GROQ_API_KEY=...
+CHAT_PROVIDERS=groq,gemini
+GROQ_LLM_MODEL=llama-3.1-8b-instant
+GEMINI_API_KEY=...          # tùy chọn – fallback khi Groq hết quota
+GEMINI_LLM_MODEL=gemini-2.0-flash-lite
+SUPABASE_URL=...
+SUPABASE_KEY=...
+SUPABASE_DB_URL=...
+EMBEDDING_DIMENSION=768
+```
 
-- VPS 2 CPU + 1GB RAM miễn phí **mãi mãi**
-- SSH vào, chạy:
-  ```bash
-  git clone https://github.com/your/repo.git && cd repo
-  pip install -r requirements.txt
-  cp .env.example .env && nano .env
-  screen -S bot
-  python run.py --no-health  # không cần health server trên VPS
-  # Ctrl+A, D để detach
-  ```
+### Deploy lên Oracle Cloud Always Free (VPS vĩnh viễn miễn phí)
+
+```bash
+git clone https://github.com/your/repo.git && cd extract-data
+pip install -r requirements.txt
+cp .env.example .env && nano .env
+screen -S bot
+python run.py --no-health
+# Ctrl+A, D để detach
+```

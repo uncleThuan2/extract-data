@@ -14,9 +14,16 @@ from services.vector_store import (
 )
 from services.qa_engine import ask
 from services.excel_export import export_extracted_data, export_qa_history
+from services.upload_service import (
+    FileAlreadyIndexedError,
+    UnsupportedFileError,
+    upload_file,
+)
 
 __all__ = [
     "SUPPORTED_EXTENSIONS",
+    "FileAlreadyIndexedError",
+    "UnsupportedFileError",
     "ask",
     "delete_file",
     "export_extracted_data",
@@ -28,5 +35,6 @@ __all__ = [
     "list_indexed_files",
     "process_document",
     "search_similar",
+    "upload_file",
     "upsert_chunks",
 ]

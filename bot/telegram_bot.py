@@ -12,6 +12,8 @@ from telegram.ext import (
     Application,
     CommandHandler,
     ContextTypes,
+    MessageHandler,
+    filters,
 )
 
 from bot.helpers import EXTRACTION_PROMPT_TEMPLATE, format_sources, parse_pipe_table
@@ -24,7 +26,11 @@ from services import (
     export_qa_history,
     format_storage_stats,
     get_storage_stats,
+    get_supported_extensions_str,
     list_indexed_files,
+    FileAlreadyIndexedError,
+    UnsupportedFileError,
+    upload_file,
 )
 
 logger = logging.getLogger(__name__)
@@ -54,7 +60,8 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         r"/extract `<mô tả>` – Trích xuất data → Excel" + "\n"
         r"/export – Xuất lịch sử Q&A → Excel" + "\n"
         r"/files – Xem danh sách file đã index" + "\n"
-        r"/storage – Xem dung lượng Supabase hiện tại",
+        r"/storage – Xem dung lượng Supabase hiện tại" + "\n\n"
+        r"💡 Gửi file PDF/DOCX/Excel trực tiếp để index\!",
         parse_mode="MarkdownV2",
     )
 
@@ -65,6 +72,83 @@ async def ping_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         f"🏓 Pong!\nPython {sys.version.split()[0]} | {platform.system()}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Document upload handler
+# ---------------------------------------------------------------------------
+async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle document files sent directly to the bot – upload to Supabase."""
+    document = update.message.document
+    if not document:
+        return
+
+    filename = document.file_name or "unknown"
+
+    # Quick check: unsupported extension (no DB call needed)
+    try:
+        from services.document_processor import SUPPORTED_EXTENSIONS
+        from pathlib import PurePath
+        ext = PurePath(filename).suffix.lower()
+        if ext not in SUPPORTED_EXTENSIONS:
+            await update.message.reply_text(
+                f"⚠️ File <b>{filename}</b> không được hỗ trợ.\n"
+                f"Hỗ trợ: {get_supported_extensions_str()}",
+                parse_mode="HTML",
+            )
+            return
+    except Exception:
+        pass
+
+    msg = await update.message.reply_text(f"⏳ [1/3] Đang tải file <b>{filename}</b>...", parse_mode="HTML")
+
+    try:
+        # Download file bytes from Telegram
+        tg_file = await document.get_file()
+        file_bytes = bytes(await tg_file.download_as_bytearray())
+        size_kb = len(file_bytes) / 1024
+        logger.info("Downloaded '%s' (%.0f KB)", filename, size_kb)
+
+        await msg.edit_text(f"⏳ [2/3] Đang xử lý và kiểm tra <b>{filename}</b>...", parse_mode="HTML")
+
+        # upload_file handles: duplicate check, text extraction, Jina embed, upsert
+        count = await asyncio.to_thread(upload_file, file_bytes, filename)
+
+        await msg.edit_text(
+            f"✅ <b>{filename}</b> đã index thành công!\n"
+            f"ℹ️ Kích thước: {size_kb:.0f} KB\n"
+            f"📄 {count} chunks lưu trên Supabase\n\n"
+            f"Dùng /ask để hỏi về tài liệu.",
+            parse_mode="HTML",
+        )
+
+    except FileAlreadyIndexedError as exc:
+        import html as _html
+        await msg.edit_text(
+            f"⚠️ <b>File đã tồn tại!</b>\n\n"
+            f"{_html.escape(exc.message)}\n\n"
+            f"Dùng /delete {_html.escape(filename)} nếu muốn index lại.",
+            parse_mode="HTML",
+        )
+
+    except UnsupportedFileError as exc:
+        import html as _html
+        await msg.edit_text(
+            f"⚠️ {_html.escape(str(exc))}",
+            parse_mode="HTML",
+        )
+
+    except Exception as exc:
+        logger.exception("Error uploading file '%s'", filename)
+        import html as _html
+        err = _html.escape(str(exc)[:400])
+        try:
+            await msg.edit_text(
+                f"❌ <b>Lỗi khi xử lý {filename}:</b>\n\n<code>{err}</code>",
+                parse_mode="HTML",
+            )
+        except Exception:
+            await _safe_reply(update, f"❌ Lỗi: {str(exc)[:300]}")
 
 
 # ---------------------------------------------------------------------------
@@ -171,10 +255,7 @@ async def extract_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     try:
         extraction_prompt = EXTRACTION_PROMPT_TEMPLATE.format(prompt=prompt)
-        result = await asyncio.wait_for(
-            asyncio.to_thread(ask, extraction_prompt, 5),
-            timeout=90.0,
-        )
+        result = await asyncio.to_thread(ask, extraction_prompt, 5)
         logger.info("CMD /extract got answer len=%d", len(result.answer))
 
         headers, rows = parse_pipe_table(result.answer)
@@ -203,17 +284,6 @@ async def extract_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 await msg.edit_text(f"✅ Trích xuất xong – {len(rows)} dòng dữ liệu.")
             except Exception:
                 pass
-
-    except asyncio.TimeoutError:
-        logger.error("CMD /extract timed out for chat_id=%s", chat_id)
-        err_text = "⏰ Hết thời gian chờ (>90s). Thử lại hoặc dùng từ khóa ngắn hơn."
-        if msg:
-            try:
-                await msg.edit_text(err_text)
-            except Exception:
-                await _safe_reply(update, err_text)
-        else:
-            await _safe_reply(update, err_text)
 
     except Exception as exc:
         logger.exception("Error extracting data")
@@ -344,7 +414,6 @@ def main() -> None:
     app = (
         Application.builder()
         .token(settings.TELEGRAM_BOT_TOKEN)
-        .concurrent_updates(True)
         .build()
     )
 
@@ -357,10 +426,17 @@ def main() -> None:
     app.add_handler(CommandHandler("files", files_cmd))
     app.add_handler(CommandHandler("delete", delete_cmd))
     app.add_handler(CommandHandler("storage", storage_cmd))
+    app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     app.add_error_handler(error_handler)
 
     logger.info("Telegram bot starting...")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    app.run_polling(
+        allowed_updates=Update.ALL_TYPES,
+        read_timeout=30,
+        write_timeout=30,
+        connect_timeout=30,
+        pool_timeout=30,
+    )
 
 
 if __name__ == "__main__":
