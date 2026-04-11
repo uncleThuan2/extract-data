@@ -196,12 +196,9 @@ def get_storage_stats() -> dict:
 
 
 def format_storage_stats(stats: dict, bold: str = "b") -> str:
-    """Format storage stats into a human-readable string.
+    """Format storage stats into a human-readable string (HTML-safe)."""
+    import html
 
-    Args:
-        stats: dict returned by get_storage_stats()
-        bold: HTML tag name for bold – 'b' for HTML (Telegram default)
-    """
     db = stats["db_size_bytes"]
     limit = stats["db_limit_bytes"]
     col = stats["collection_size_bytes"]
@@ -212,7 +209,9 @@ def format_storage_stats(stats: dict, bold: str = "b") -> str:
     bar = "▓" * filled + "░" * (bar_width - filled)
 
     def b(s: str) -> str:
-        return f"<{bold}>{s}</{bold}>"
+        if not bold:
+            return html.escape(s)
+        return f"<{bold}>{html.escape(s)}</{bold}>"
 
     lines = [
         f"📊 {b('Supabase Storage')}",
@@ -224,8 +223,8 @@ def format_storage_stats(stats: dict, bold: str = "b") -> str:
     ]
 
     if stats["per_file"]:
-        lines += ["", f"📁 {b('Files (' + str(len(stats['per_file'])) + ')')}:"]
+        lines += ["", f"📁 {b('Files (' + str(len(stats['per_file'])) + '):')}"]
         for i, (fn, cnt) in enumerate(stats["per_file"], 1):
-            lines.append(f"  {i}. {fn} — {cnt:,} chunks")
+            lines.append(f"  {i}. {html.escape(fn)} — {cnt:,} chunks")
 
     return "\n".join(lines)

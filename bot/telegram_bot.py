@@ -143,10 +143,17 @@ async def ask_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             source_lines = format_sources(result.sources)
             sources_str = "\n\n📚 Sources:\n" + "\n".join(f"• {s}" for s in source_lines)
 
-        await msg.edit_text(f"{answer}{sources_str}")
+        text = f"{answer}{sources_str}"
+        try:
+            await msg.edit_text(text)
+        except Exception:
+            await update.message.reply_text(text)
     except Exception:
         logger.exception("Error answering question")
-        await msg.edit_text("❌ Lỗi khi trả lời. Kiểm tra logs.")
+        try:
+            await msg.edit_text("❌ Lỗi khi trả lời. Kiểm tra logs.")
+        except Exception:
+            await update.message.reply_text("❌ Lỗi khi trả lời.")
 
 
 # ---------------------------------------------------------------------------
@@ -166,10 +173,16 @@ async def export_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             filename="qa_report.xlsx",
             caption=f"📊 Exported {len(history)} Q&A entries.",
         )
-        await msg.delete()
+        try:
+            await msg.delete()
+        except Exception:
+            pass
     except Exception:
         logger.exception("Error exporting Excel")
-        await msg.edit_text("❌ Lỗi khi xuất Excel.")
+        try:
+            await msg.edit_text("❌ Lỗi khi xuất Excel.")
+        except Exception:
+            await update.message.reply_text("❌ Lỗi khi xuất Excel.")
 
 
 # ---------------------------------------------------------------------------
@@ -191,7 +204,11 @@ async def extract_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
         headers, rows = parse_pipe_table(result.answer)
         if not rows:
-            await msg.edit_text(f"📝 {result.answer}")
+            text = f"📝 {result.answer}"
+            try:
+                await msg.edit_text(text)
+            except Exception:
+                await update.message.reply_text(text)
             return
 
         excel_bytes = await asyncio.to_thread(export_extracted_data, rows, headers)
@@ -200,10 +217,16 @@ async def extract_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             filename="extracted_data.xlsx",
             caption=f"📊 Extracted {len(rows)} rows.",
         )
-        await msg.delete()
+        try:
+            await msg.delete()
+        except Exception:
+            pass
     except Exception:
         logger.exception("Error extracting data")
-        await msg.edit_text("❌ Lỗi khi trích xuất data.")
+        try:
+            await msg.edit_text("❌ Lỗi khi trích xuất data.")
+        except Exception:
+            await update.message.reply_text("❌ Lỗi khi trích xuất data.")
 
 
 # ---------------------------------------------------------------------------
@@ -216,14 +239,19 @@ async def files_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not filenames:
             await msg.edit_text("💭 Chưa có file nào. Gửi file để bắt đầu.")
             return
-        lines = [f"`{i+1}.` 📄 {f}" for i, f in enumerate(filenames)]
-        await msg.edit_text(
-            f"*Indexed files ({len(filenames)}):*\n" + "\n".join(lines),
-            parse_mode="Markdown",
-        )
+        import html
+        lines = [f"{i+1}. 📄 {html.escape(f)}" for i, f in enumerate(filenames)]
+        text = f"<b>Indexed files ({len(filenames)}):</b>\n" + "\n".join(lines)
+        try:
+            await msg.edit_text(text, parse_mode="HTML")
+        except Exception:
+            await msg.edit_text(f"Indexed files ({len(filenames)}):\n" + "\n".join(lines))
     except Exception:
         logger.exception("Error listing files")
-        await msg.edit_text("❌ Lỗi khi liệt kê files.")
+        try:
+            await msg.edit_text("❌ Lỗi khi liệt kê files.")
+        except Exception:
+            await update.message.reply_text("❌ Lỗi khi liệt kê files.")
 
 
 # ---------------------------------------------------------------------------
@@ -242,20 +270,26 @@ async def delete_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     msg = await update.message.reply_text(f"⏳ Đang xóa {filename}...")
     try:
         count = await asyncio.to_thread(delete_file, filename)
+        import html
+        safe_name = html.escape(filename)
         if count == 0:
-            await msg.edit_text(
-                f"⚠️ Không tìm thấy file *{filename}*.\n"
-                f"Dùng /files để xem tên chính xác.",
-                parse_mode="Markdown",
-            )
+            text = f"⚠️ Không tìm thấy file <b>{safe_name}</b>.\nDùng /files để xem tên chính xác."
+            try:
+                await msg.edit_text(text, parse_mode="HTML")
+            except Exception:
+                await update.message.reply_text(f"⚠️ Không tìm thấy file {filename}.")
         else:
-            await msg.edit_text(
-                f"✅ Đã xóa *{filename}* ({count} chunks đã xóa khỏi Supabase).",
-                parse_mode="Markdown",
-            )
+            text = f"✅ Đã xóa <b>{safe_name}</b> ({count} chunks đã xóa khỏi Supabase)."
+            try:
+                await msg.edit_text(text, parse_mode="HTML")
+            except Exception:
+                await update.message.reply_text(f"✅ Đã xóa {filename} ({count} chunks).")
     except Exception:
         logger.exception("Error deleting file %s", filename)
-        await msg.edit_text("❌ Lỗi khi xóa file. Kiểm tra logs.")
+        try:
+            await msg.edit_text("❌ Lỗi khi xóa file. Kiểm tra logs.")
+        except Exception:
+            await update.message.reply_text("❌ Lỗi khi xóa file.")
 
 
 # ---------------------------------------------------------------------------
@@ -266,10 +300,18 @@ async def storage_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     try:
         stats = await asyncio.to_thread(get_storage_stats)
         text = format_storage_stats(stats, bold="b")
-        await msg.edit_text(text, parse_mode="HTML")
+        try:
+            await msg.edit_text(text, parse_mode="HTML")
+        except Exception:
+            # Fallback: send as plain text if HTML rendering fails
+            plain = format_storage_stats(stats, bold="")
+            await msg.edit_text(plain)
     except Exception:
         logger.exception("Error fetching storage stats")
-        await msg.edit_text("❌ Lỗi khi lấy thông tin dung lượng. Kiểm tra logs.")
+        try:
+            await msg.edit_text("❌ Lỗi khi lấy thông tin dung lượng. Kiểm tra logs.")
+        except Exception:
+            await update.message.reply_text("❌ Lỗi khi lấy thông tin dung lượng.")
 
 
 # ---------------------------------------------------------------------------
