@@ -220,28 +220,43 @@ async def export_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 async def extract_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id if update.effective_chat else "unknown"
     logger.info("CMD /extract called by chat_id=%s args=%s", chat_id, context.args)
+
+    prompt = " ".join(context.args) if context.args else ""
+    if not prompt:
+        await _safe_reply(update,
+            "📋 Dùng: /extract <mô tả data cần trích>\n\n"
+            "Ví dụ: /extract tất cả tên công ty và địa chỉ"
+        )
+        return
+
+    # Send loading message first – guaranteed before any heavy work
     msg = None
     try:
-        prompt = " ".join(context.args) if context.args else ""
-        if not prompt:
-            await _safe_reply(update,
-                "📋 Dùng: /extract <mô tả data cần trích>\n\n"
-                "Ví dụ: /extract tất cả tên công ty và địa chỉ"
-            )
-            return
+        msg = await update.message.reply_text("⏳ Đang trích xuất data (có thể mất 15-30s)...")
+    except Exception as e:
+        logger.error("extract_cmd: failed to send loading message: %s", e)
 
-        msg = await update.message.reply_text("⏳ Đang trích xuất data...")
-
+    try:
         extraction_prompt = EXTRACTION_PROMPT_TEMPLATE.format(prompt=prompt)
-        result = await asyncio.to_thread(ask, extraction_prompt, 10)
+        result = await asyncio.wait_for(
+            asyncio.to_thread(ask, extraction_prompt, 5),
+            timeout=90.0,
+        )
+        logger.info("CMD /extract got answer len=%d", len(result.answer))
 
         headers, rows = parse_pipe_table(result.answer)
+        logger.info("CMD /extract parsed rows=%d headers=%s", len(rows), headers)
+
         if not rows:
-            text = f"📝 {result.answer[:MAX_TELEGRAM_MSG]}"
-            try:
-                await msg.edit_text(text)
-            except Exception:
-                await _safe_reply(update, text)
+            import html as _html
+            text = f"📝 {_html.escape(result.answer[:MAX_TELEGRAM_MSG])}"
+            if msg:
+                try:
+                    await msg.edit_text(text, parse_mode="HTML")
+                except Exception:
+                    await _safe_reply(update, result.answer[:MAX_TELEGRAM_MSG])
+            else:
+                await _safe_reply(update, result.answer[:MAX_TELEGRAM_MSG])
             return
 
         excel_bytes = await asyncio.to_thread(export_extracted_data, rows, headers)
@@ -250,14 +265,28 @@ async def extract_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             filename="extracted_data.xlsx",
             caption=f"📊 Extracted {len(rows)} rows.",
         )
-        try:
-            await msg.edit_text(f"✅ Trích xuất xong – {len(rows)} dòng dữ liệu.")
-        except Exception:
-            pass
+        if msg:
+            try:
+                await msg.edit_text(f"✅ Trích xuất xong – {len(rows)} dòng dữ liệu.")
+            except Exception:
+                pass
+
+    except asyncio.TimeoutError:
+        logger.error("CMD /extract timed out for chat_id=%s", chat_id)
+        err_text = "⏰ Hết thời gian chờ (>90s). Thử lại hoặc dùng từ khóa ngắn hơn."
+        if msg:
+            try:
+                await msg.edit_text(err_text)
+            except Exception:
+                await _safe_reply(update, err_text)
+        else:
+            await _safe_reply(update, err_text)
+
     except Exception as exc:
         logger.exception("Error extracting data")
         err = str(exc)[:300]
-        text = f"❌ Lỗi khi trích xuất data:\n<code>{err}</code>"
+        import html as _html
+        text = f"❌ Lỗi khi trích xuất data:\n<code>{_html.escape(err)}</code>"
         if msg:
             try:
                 await msg.edit_text(text, parse_mode="HTML")
