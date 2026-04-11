@@ -403,6 +403,17 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
         await _safe_reply(update, f"❌ Lỗi không mong muốn:\n{err}")
 
 
+async def _debug_all_updates(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Log every incoming update – temporary diagnostic middleware."""
+    msg = update.message
+    if msg:
+        text = (msg.text or "")[:80]
+        logger.info("UPDATE_DEBUG chat=%s text=%r entities=%s",
+                    update.effective_chat.id if update.effective_chat else "?",
+                    text,
+                    msg.entities)
+
+
 # ---------------------------------------------------------------------------
 # Run
 # ---------------------------------------------------------------------------
@@ -416,6 +427,10 @@ def main() -> None:
         .token(settings.TELEGRAM_BOT_TOKEN)
         .build()
     )
+
+    # ── Diagnostic: log every incoming update (Group -1 = runs first) ──
+    from telegram.ext import TypeHandler
+    app.add_handler(TypeHandler(Update, _debug_all_updates), group=-1)
 
     app.add_handler(CommandHandler("start", start_cmd))
     app.add_handler(CommandHandler("help", start_cmd))
