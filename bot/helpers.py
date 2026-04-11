@@ -1,4 +1,4 @@
-"""Shared helpers for bot modules (Discord & Telegram)."""
+"""Shared helpers for the Telegram bot."""
 
 from __future__ import annotations
 

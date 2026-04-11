@@ -36,8 +36,7 @@ class Settings:
     # --- GitHub Copilot (GitHub Models API) ---
     GITHUB_TOKEN: str = os.getenv("GITHUB_TOKEN", "")
 
-    # --- Bot Tokens ---
-    DISCORD_BOT_TOKEN: str = os.getenv("DISCORD_BOT_TOKEN", "")
+    # --- Bot Token ---
     TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
 
     # --- Supabase ---

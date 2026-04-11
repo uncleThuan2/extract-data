@@ -1,4 +1,4 @@
-"""Telegram bot – upload documents, ask questions, export Excel."""
+"""Telegram bot – ask questions, export Excel."""
 
 from __future__ import annotations
 
@@ -47,7 +47,7 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         r"👋 *PDF Q&A Bot*" + "\n\n"
         r"Tôi có thể giúp bạn hỏi đáp tài liệu PDF\!" + "\n\n"
         r"📌 *Commands:*" + "\n"
-        r"/upload – Gửi file để index \(PDF, DOCX, TXT, CSV\.\.\.\)" + "\n"
+
         r"/ask `<câu hỏi>` – Hỏi về tài liệu" + "\n"
         r"/extract `<mô tả>` – Trích xuất data → Excel" + "\n"
         r"/export – Xuất lịch sử Q&A → Excel" + "\n"
@@ -55,16 +55,6 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         r"/storage – Xem dung lượng Supabase hiện tại" + "\n\n"
         r"💡 Hoặc gửi file PDF trực tiếp để tôi index\!",
         parse_mode="MarkdownV2",
-    )
-
-
-# ---------------------------------------------------------------------------
-# /upload or direct file
-# ---------------------------------------------------------------------------
-async def upload_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(
-        f"📎 Gửi file cho tôi (kéo thả hoặc attach).\n"
-        f"Hỗ trợ: {get_supported_extensions_str()}"
     )
 
 
@@ -294,7 +284,6 @@ def main() -> None:
 
     app.add_handler(CommandHandler("start", start_cmd))
     app.add_handler(CommandHandler("help", start_cmd))
-    app.add_handler(CommandHandler("upload", upload_cmd))
     app.add_handler(CommandHandler("ask", ask_cmd))
     app.add_handler(CommandHandler("export", export_cmd))
     app.add_handler(CommandHandler("extract", extract_cmd))

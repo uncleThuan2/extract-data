@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 
 import vecs
+import sqlalchemy.exc
 from sqlalchemy import create_engine, text
 
 from config import settings
@@ -27,20 +28,28 @@ logger = logging.getLogger(__name__)
 _vx: vecs.Client | None = None
 
 
-def _get_vecs_client() -> vecs.Client:
+def _get_vecs_client(force_new: bool = False) -> vecs.Client:
     global _vx
-    if _vx is None:
+    if _vx is None or force_new:
         _vx = vecs.create_client(settings.SUPABASE_DB_URL)
     return _vx
 
 
 def get_collection() -> vecs.Collection:
     """Get or create the vector collection in Supabase."""
-    vx = _get_vecs_client()
-    return vx.get_or_create_collection(
-        name=settings.COLLECTION_NAME,
-        dimension=settings.EMBEDDING_DIMENSION,
-    )
+    try:
+        vx = _get_vecs_client()
+        return vx.get_or_create_collection(
+            name=settings.COLLECTION_NAME,
+            dimension=settings.EMBEDDING_DIMENSION,
+        )
+    except (sqlalchemy.exc.DatabaseError, sqlalchemy.exc.OperationalError) as exc:
+        logger.warning("DB connection error, resetting vecs client and retrying: %s", exc)
+        vx = _get_vecs_client(force_new=True)
+        return vx.get_or_create_collection(
+            name=settings.COLLECTION_NAME,
+            dimension=settings.EMBEDDING_DIMENSION,
+        )
 
 
 def embed_texts(texts: list[str]) -> list[list[float]]:
@@ -195,7 +204,7 @@ def format_storage_stats(stats: dict, bold: str = "**") -> str:
 
     Args:
         stats: dict returned by get_storage_stats()
-        bold: markdown bold syntax – '**' for Discord, '*' for Telegram
+        bold: markdown bold syntax – '*' for Telegram, '**' for standard Markdown
     """
     db = stats["db_size_bytes"]
     limit = stats["db_limit_bytes"]

@@ -15,9 +15,6 @@ google-genai==1.69.0
 supabase==2.11.0
 vecs==0.4.4
 
-# Discord bot
-discord.py==2.4.0
-
 # Telegram bot
 python-telegram-bot==21.8
 
