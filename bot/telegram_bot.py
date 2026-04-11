@@ -265,8 +265,8 @@ async def storage_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     msg = await update.message.reply_text("📊 Đang kiểm tra dung lượng...")
     try:
         stats = await asyncio.to_thread(get_storage_stats)
-        text = format_storage_stats(stats, bold="*")
-        await msg.edit_text(text, parse_mode="Markdown")
+        text = format_storage_stats(stats, bold="b")
+        await msg.edit_text(text, parse_mode="HTML")
     except Exception:
         logger.exception("Error fetching storage stats")
         await msg.edit_text("❌ Lỗi khi lấy thông tin dung lượng. Kiểm tra logs.")

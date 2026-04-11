@@ -1,14 +1,19 @@
-"""Unified AI client – supports OpenAI, Google Gemini, GitHub Copilot, and Jina AI.
+"""Unified AI client with multi-provider fallback.
 
-Chat provider → set AI_PROVIDER in .env:
-  AI_PROVIDER=openai    → uses OPENAI_API_KEY
-  AI_PROVIDER=gemini    → uses GEMINI_API_KEY (free)
-  AI_PROVIDER=copilot   → uses GITHUB_TOKEN
+Embedding: Jina AI only (free, no RPM limit, 1M tokens/month).
 
-Embed provider → set EMBED_PROVIDER (optional, defaults to AI_PROVIDER):
-  EMBED_PROVIDER=jina   → uses JINA_API_KEY (free 1M tokens/month, no RPM limit)
+Chat providers with auto-fallback (set CHAT_PROVIDERS in .env):
+  groq    → GROQ_API_KEY,   model: GROQ_LLM_MODEL    (default: llama-3.1-8b-instant)
+  gemini  → GEMINI_API_KEY, model: GEMINI_LLM_MODEL  (default: gemini-2.0-flash-lite)
+  openai  → OPENAI_API_KEY, model: OPENAI_LLM_MODEL  (default: gpt-4o-mini)
+  copilot → GITHUB_TOKEN,   model: COPILOT_LLM_MODEL (default: gpt-4o-mini)
 
-Recommended combo: AI_PROVIDER=gemini + EMBED_PROVIDER=jina
+Example .env:
+  CHAT_PROVIDERS=groq,gemini
+  GROQ_API_KEY=...
+  GEMINI_API_KEY=...
+  EMBED_PROVIDER=jina
+  JINA_API_KEY=...
 """
 
 from __future__ import annotations
@@ -24,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Protocol – shared interface both providers implement
+# Protocols
 # ---------------------------------------------------------------------------
 
 class EmbedFn(Protocol):
@@ -36,70 +41,34 @@ class ChatFn(Protocol):
 
 
 # ---------------------------------------------------------------------------
-# OpenAI implementation
+# Quota / rate-limit helpers
 # ---------------------------------------------------------------------------
 
-def _openai_embed(texts: list[str]) -> list[list[float]]:
-    from openai import OpenAI
-
-    client = OpenAI(api_key=settings.OPENAI_API_KEY)
-    response = client.embeddings.create(
-        model=settings.EMBEDDING_MODEL,
-        input=texts,
+def _is_quota_exhausted(exc: Exception) -> bool:
+    """Return True if the error means daily quota is gone (not just RPM throttle)."""
+    msg = str(exc)
+    return (
+        "limit: 0" in msg
+        or "PerDay" in msg
+        or ("per day" in msg.lower() and "rate limit" in msg.lower())
+        or ("day" in msg.lower() and "quota" in msg.lower())
     )
-    return [item.embedding for item in response.data]
 
 
-def _openai_chat(system: str, user: str) -> str:
-    from openai import OpenAI
-
-    client = OpenAI(api_key=settings.OPENAI_API_KEY)
-    response = client.chat.completions.create(
-        model=settings.LLM_MODEL,
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-        temperature=0.1,
-        max_tokens=2000,
-    )
-    return response.choices[0].message.content or ""
+def _parse_retry_after(exc: Exception, default: float = 35.0) -> float:
+    match = re.search(r"retry in ([\d.]+)s", str(exc), re.IGNORECASE)
+    if match:
+        return float(match.group(1)) + 1.0
+    return default
 
 
 # ---------------------------------------------------------------------------
-# Gemini implementation  (google-genai SDK ≥ 1.0)
-# gemini-embedding-001 default output = 3072 dims.
-# We pin output_dimensionality to EMBEDDING_DIMENSION so it matches
-# whatever dimension the Supabase collection was created with.
-# embed_content accepts a list of strings → batched in one call (max 100).
-# Free tier: 100 requests/min → retry with server-suggested wait on 429.
+# Session state
 # ---------------------------------------------------------------------------
 
-_GEMINI_EMBED_BATCH = 100   # max items per embed_content call
-_GEMINI_MAX_RETRIES = 5
-_GEMINI_RETRY_DEFAULT = 35  # seconds to wait if not specified in error
-
-_gemini_key_index = 0  # current key index for rotation
-
-
-def _is_daily_quota_exhausted(exc: Exception) -> bool:
-    """Return True if the 429 is a daily quota exhaustion (limit: 0), not just RPM throttle."""
-    return "PerDay" in str(exc) or "limit: 0" in str(exc)
-
-
-def _next_gemini_key() -> str | None:
-    """Rotate to the next available Gemini API key. Returns None if all keys exhausted."""
-    global _gemini_key_index
-    keys = settings.gemini_api_keys
-    _gemini_key_index += 1
-    if _gemini_key_index < len(keys):
-        logger.warning(
-            "Rotating to Gemini API key #%d/%d",
-            _gemini_key_index + 1, len(keys),
-        )
-        return keys[_gemini_key_index]
-    logger.error("All %d Gemini API key(s) exhausted for today.", len(keys))
-    return None
+_exhausted_providers: set[str] = set()
+_gemini_key_index: int = 0
+_MAX_RETRIES = 4
 
 
 def _current_gemini_key() -> str:
@@ -109,70 +78,57 @@ def _current_gemini_key() -> str:
     return keys[min(_gemini_key_index, len(keys) - 1)]
 
 
-def _parse_retry_after(exc: Exception) -> float:
-    """Extract 'retry in X.Xs' from Gemini 429 error message."""
-    match = re.search(r"retry in ([\d.]+)s", str(exc), re.IGNORECASE)
-    if match:
-        return float(match.group(1)) + 1.0  # +1s buffer
-    return _GEMINI_RETRY_DEFAULT
+def _rotate_gemini_key() -> bool:
+    global _gemini_key_index
+    keys = settings.gemini_api_keys
+    _gemini_key_index += 1
+    if _gemini_key_index < len(keys):
+        logger.warning("Rotating to Gemini API key #%d/%d", _gemini_key_index + 1, len(keys))
+        return True
+    logger.warning("All %d Gemini API key(s) exhausted.", len(keys))
+    _gemini_key_index = len(keys) - 1
+    return False
 
 
-def _gemini_embed(texts: list[str]) -> list[list[float]]:
+# ---------------------------------------------------------------------------
+# Chat implementations (one per provider)
+# ---------------------------------------------------------------------------
+
+def _chat_groq(system: str, user: str) -> str:
+    from openai import OpenAI, RateLimitError
+
+    client = OpenAI(api_key=settings.GROQ_API_KEY, base_url="https://api.groq.com/openai/v1")
+    for attempt in range(1, _MAX_RETRIES + 1):
+        try:
+            resp = client.chat.completions.create(
+                model=settings.GROQ_LLM_MODEL,
+                messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+                temperature=0.1,
+                max_tokens=2000,
+            )
+            return resp.choices[0].message.content or ""
+        except RateLimitError as exc:
+            if _is_quota_exhausted(exc):
+                raise
+            if attempt < _MAX_RETRIES:
+                wait = _parse_retry_after(exc, default=60.0)
+                logger.warning("Groq RPM limit. Waiting %.0fs (retry %d/%d)...", wait, attempt, _MAX_RETRIES)
+                time.sleep(wait)
+            else:
+                raise
+    raise RuntimeError("Groq chat failed after all retries")
+
+
+def _chat_gemini(system: str, user: str) -> str:
     from google import genai
     from google.genai import types
     from google.genai.errors import ClientError
 
-    config = types.EmbedContentConfig(
-        output_dimensionality=settings.EMBEDDING_DIMENSION,
-    )
-    embeddings: list[list[float]] = []
-    for i in range(0, len(texts), _GEMINI_EMBED_BATCH):
-        batch = texts[i : i + _GEMINI_EMBED_BATCH]
-        for attempt in range(1, _GEMINI_MAX_RETRIES + 1):
-            try:
-                client = genai.Client(api_key=_current_gemini_key())
-                response = client.models.embed_content(
-                    model=settings.GEMINI_EMBEDDING_MODEL,
-                    contents=batch,
-                    config=config,
-                )
-                embeddings.extend(e.values for e in response.embeddings)
-                break
-            except ClientError as exc:
-                if exc.code == 429:
-                    if _is_daily_quota_exhausted(exc):
-                        next_key = _next_gemini_key()
-                        if next_key is None:
-                            raise
-                        continue  # retry same batch with new key
-                    if attempt < _GEMINI_MAX_RETRIES:
-                        wait = _parse_retry_after(exc)
-                        logger.warning(
-                            "Gemini rate limit hit (batch %d/%d). Waiting %.0fs before retry %d/%d...",
-                            i // _GEMINI_EMBED_BATCH + 1,
-                            (len(texts) - 1) // _GEMINI_EMBED_BATCH + 1,
-                            wait,
-                            attempt,
-                            _GEMINI_MAX_RETRIES,
-                        )
-                        time.sleep(wait)
-                    else:
-                        raise
-                else:
-                    raise
-    return embeddings
-
-
-def _gemini_chat(system: str, user: str) -> str:
-    from google import genai
-    from google.genai import types
-    from google.genai.errors import ClientError
-
-    for attempt in range(1, _GEMINI_MAX_RETRIES + 1):
+    for attempt in range(1, _MAX_RETRIES + 1):
         try:
             client = genai.Client(api_key=_current_gemini_key())
-            response = client.models.generate_content(
-                model=settings.LLM_MODEL,
+            resp = client.models.generate_content(
+                model=settings.GEMINI_LLM_MODEL,
                 contents=user,
                 config=types.GenerateContentConfig(
                     system_instruction=system,
@@ -180,120 +136,121 @@ def _gemini_chat(system: str, user: str) -> str:
                     max_output_tokens=2000,
                 ),
             )
-            return response.text or ""
+            return resp.text or ""
         except ClientError as exc:
-            if exc.code == 429:
-                if _is_daily_quota_exhausted(exc):
-                    next_key = _next_gemini_key()
-                    if next_key is None:
-                        raise
-                    continue  # retry with new key
-                if attempt < _GEMINI_MAX_RETRIES:
-                    wait = _parse_retry_after(exc)
-                    logger.warning(
-                        "Gemini chat rate limit hit. Waiting %.0fs before retry %d/%d...",
-                        wait, attempt, _GEMINI_MAX_RETRIES,
-                    )
-                    time.sleep(wait)
-                else:
-                    raise
+            if exc.code != 429:
+                raise
+            if _is_quota_exhausted(exc):
+                if _rotate_gemini_key():
+                    continue
+                raise
+            if attempt < _MAX_RETRIES:
+                wait = _parse_retry_after(exc)
+                logger.warning("Gemini RPM limit. Waiting %.0fs (retry %d/%d)...", wait, attempt, _MAX_RETRIES)
+                time.sleep(wait)
             else:
                 raise
     raise RuntimeError("Gemini chat failed after all retries")
 
 
-# ---------------------------------------------------------------------------
-# Jina AI embedding  (OpenAI-compatible, free 1M tokens/month, no RPM limit)
-# Docs: https://jina.ai/embeddings
-# ---------------------------------------------------------------------------
-
-_JINA_BASE_URL = "https://api.jina.ai/v1"
-_JINA_EMBED_BATCH = 2048  # max items per call
-
-
-def _jina_embed(texts: list[str]) -> list[list[float]]:
+def _chat_openai(system: str, user: str) -> str:
     from openai import OpenAI
 
-    client = OpenAI(api_key=settings.JINA_API_KEY, base_url=_JINA_BASE_URL)
+    client = OpenAI(api_key=settings.OPENAI_API_KEY)
+    resp = client.chat.completions.create(
+        model=settings.OPENAI_LLM_MODEL,
+        messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+        temperature=0.1,
+        max_tokens=2000,
+    )
+    return resp.choices[0].message.content or ""
+
+
+def _chat_copilot(system: str, user: str) -> str:
+    from openai import OpenAI
+
+    client = OpenAI(api_key=settings.GITHUB_TOKEN, base_url="https://models.inference.ai.azure.com")
+    resp = client.chat.completions.create(
+        model=settings.COPILOT_LLM_MODEL,
+        messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+        temperature=0.1,
+        max_tokens=2000,
+    )
+    return resp.choices[0].message.content or ""
+
+
+_CHAT_DISPATCH: dict[str, ChatFn] = {
+    "groq": _chat_groq,
+    "gemini": _chat_gemini,
+    "openai": _chat_openai,
+    "copilot": _chat_copilot,
+}
+
+
+# ---------------------------------------------------------------------------
+# Chat with automatic fallback across providers
+# ---------------------------------------------------------------------------
+
+def chat_with_fallback(system: str, user: str) -> str:
+    """Try each provider in CHAT_PROVIDERS order. Falls back on daily quota exhaustion."""
+    providers = settings.chat_providers
+    last_exc: Exception | None = None
+
+    for provider in providers:
+        if provider in _exhausted_providers:
+            logger.debug("Skipping exhausted provider: %s", provider)
+            continue
+
+        fn = _CHAT_DISPATCH.get(provider)
+        if fn is None:
+            logger.warning("Unknown chat provider '%s', skipping.", provider)
+            continue
+
+        try:
+            logger.debug("Trying chat provider: %s", provider)
+            return fn(system, user)
+        except Exception as exc:
+            if _is_quota_exhausted(exc):
+                logger.warning("Provider '%s' daily quota exhausted – switching to next.", provider)
+                _exhausted_providers.add(provider)
+                last_exc = exc
+            else:
+                raise
+
+    raise RuntimeError(
+        f"All chat providers exhausted: {providers}. Last error: {last_exc}"
+    ) from last_exc
+
+
+# ---------------------------------------------------------------------------
+# Embedding – Jina AI only
+# ---------------------------------------------------------------------------
+
+def _embed_jina(texts: list[str]) -> list[list[float]]:
+    from openai import OpenAI
+
+    client = OpenAI(api_key=settings.JINA_API_KEY, base_url="https://api.jina.ai/v1")
     embeddings: list[list[float]] = []
-    for i in range(0, len(texts), _JINA_EMBED_BATCH):
-        batch = texts[i : i + _JINA_EMBED_BATCH]
-        response = client.embeddings.create(
+    for i in range(0, len(texts), 2048):
+        batch = texts[i : i + 2048]
+        resp = client.embeddings.create(
             model=settings.JINA_EMBEDDING_MODEL,
             input=batch,
             extra_body={"dimensions": settings.EMBEDDING_DIMENSION},
         )
-        embeddings.extend(item.embedding for item in response.data)
+        embeddings.extend(item.embedding for item in resp.data)
     return embeddings
 
 
 # ---------------------------------------------------------------------------
-# GitHub Copilot implementation (GitHub Models API – OpenAI-compatible)
-# Docs: https://docs.github.com/en/github-models
-# ---------------------------------------------------------------------------
-
-_GITHUB_MODELS_BASE_URL = "https://models.inference.ai.azure.com"
-
-
-def _copilot_embed(texts: list[str]) -> list[list[float]]:
-    from openai import OpenAI
-
-    client = OpenAI(
-        api_key=settings.GITHUB_TOKEN,
-        base_url=_GITHUB_MODELS_BASE_URL,
-    )
-    response = client.embeddings.create(
-        model=settings.EMBEDDING_MODEL,
-        input=texts,
-    )
-    return [item.embedding for item in response.data]
-
-
-def _copilot_chat(system: str, user: str) -> str:
-    from openai import OpenAI
-
-    client = OpenAI(
-        api_key=settings.GITHUB_TOKEN,
-        base_url=_GITHUB_MODELS_BASE_URL,
-    )
-    response = client.chat.completions.create(
-        model=settings.LLM_MODEL,
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-        temperature=0.1,
-        max_tokens=2000,
-    )
-    return response.choices[0].message.content or ""
-
-
-# ---------------------------------------------------------------------------
-# Factory – returns the right functions based on AI_PROVIDER
+# Public API
 # ---------------------------------------------------------------------------
 
 def get_embed_fn() -> EmbedFn:
-    provider = settings.effective_embed_provider
-    if provider == "jina":
-        logger.debug("Using Jina AI embedding (%s, %d dims)", settings.JINA_EMBEDDING_MODEL, settings.EMBEDDING_DIMENSION)
-        return _jina_embed
-    if provider == "gemini":
-        logger.debug("Using Gemini embedding (%s)", settings.GEMINI_EMBEDDING_MODEL)
-        return _gemini_embed
-    if provider == "copilot":
-        logger.debug("Using GitHub Copilot embedding (%s)", settings.EMBEDDING_MODEL)
-        return _copilot_embed
-    logger.debug("Using OpenAI embedding (%s)", settings.EMBEDDING_MODEL)
-    return _openai_embed
+    logger.debug("Embed: Jina (%s, %d dims)", settings.JINA_EMBEDDING_MODEL, settings.EMBEDDING_DIMENSION)
+    return _embed_jina
 
 
 def get_chat_fn() -> ChatFn:
-    provider = settings.AI_PROVIDER
-    if provider == "gemini":
-        logger.debug("Using Gemini chat (%s)", settings.LLM_MODEL)
-        return _gemini_chat
-    if provider == "copilot":
-        logger.debug("Using GitHub Copilot chat (%s)", settings.LLM_MODEL)
-        return _copilot_chat
-    logger.debug("Using OpenAI chat (%s)", settings.LLM_MODEL)
-    return _openai_chat
+    logger.debug("Chat providers (ordered): %s", settings.chat_providers)
+    return chat_with_fallback

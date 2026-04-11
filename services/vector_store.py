@@ -195,12 +195,12 @@ def get_storage_stats() -> dict:
     }
 
 
-def format_storage_stats(stats: dict, bold: str = "**") -> str:
+def format_storage_stats(stats: dict, bold: str = "b") -> str:
     """Format storage stats into a human-readable string.
 
     Args:
         stats: dict returned by get_storage_stats()
-        bold: markdown bold syntax – '*' for Telegram, '**' for standard Markdown
+        bold: HTML tag name for bold – 'b' for HTML (Telegram default)
     """
     db = stats["db_size_bytes"]
     limit = stats["db_limit_bytes"]
@@ -211,18 +211,20 @@ def format_storage_stats(stats: dict, bold: str = "**") -> str:
     filled = int(pct / 100 * bar_width)
     bar = "▓" * filled + "░" * (bar_width - filled)
 
-    b = bold  # shorthand
+    def b(s: str) -> str:
+        return f"<{bold}>{s}</{bold}>"
+
     lines = [
-        f"📊 {b}Supabase Storage{b}",
+        f"📊 {b('Supabase Storage')}",
         "",
-        f"🗄️ Database: {b}{_fmt_bytes(db)}{b} / 500 MB  ({pct:.1f}%)",
-        f"`[{bar}]`",
-        f"📦 Vector collection: {b}{_fmt_bytes(col)}{b}",
-        f"📄 Total chunks: {b}{stats['total_chunks']:,}{b}",
+        f"🗄️ Database: {b(_fmt_bytes(db))} / 500 MB  ({pct:.1f}%)",
+        f"[{bar}]",
+        f"📦 Vector collection: {b(_fmt_bytes(col))}",
+        f"📄 Total chunks: {b(str(stats['total_chunks']))}",
     ]
 
     if stats["per_file"]:
-        lines += ["", f"📁 {b}Files ({len(stats['per_file'])}){b}:"]
+        lines += ["", f"📁 {b('Files (' + str(len(stats['per_file'])) + ')')}:"]
         for i, (fn, cnt) in enumerate(stats["per_file"], 1):
             lines.append(f"  {i}. {fn} — {cnt:,} chunks")
 
