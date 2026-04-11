@@ -75,6 +75,7 @@ async def ping_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
+async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle document files sent directly to the bot."""
     document = update.message.document
     if not document:
