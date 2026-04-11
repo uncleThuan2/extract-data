@@ -8,37 +8,42 @@ services:
     healthCheckPath: /health
 
     envVars:
-      - key: AI_PROVIDER
-        sync: false        # hoặc gemini / copilot
-
-      # Điền các giá trị bí mật trực tiếp trong Render Dashboard
-      # (hoặc dùng fromGroup nếu bạn tạo Environment Group)
-      # - key: OPENAI_API_KEY
-      #   sync: false
+      # --- Chat providers (ordered fallback) ---
+      - key: CHAT_PROVIDERS
+        sync: false        # groq,gemini
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_LLM_MODEL
+        sync: false        # llama-3.1-8b-instant
       - key: GEMINI_API_KEY
         sync: false
-       # Tuỳ chỉnh model / chunk nếu cần
-      - key: LLM_MODEL
-        sync: false
-      - key: EMBEDDING_MODEL
+      - key: GEMINI_LLM_MODEL
+        sync: false        # gemini-2.0-flash-lite
+      # Optional: thêm key Gemini từ account khác
+      # - key: GEMINI_API_KEY_2
+      #   sync: false
+
+      # --- Embedding ---
+      - key: JINA_API_KEY
         sync: false
       - key: EMBEDDING_DIMENSION
-        sync: false
-      # - key: GITHUB_TOKEN
-      #   sync: false
-      - key: DISCORD_BOT_TOKEN
-        sync: false
+        sync: false        # 768
+
+      # --- Telegram ---
       - key: TELEGRAM_BOT_TOKEN
         sync: false
+
+      # --- Supabase ---
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_KEY
         sync: false
       - key: SUPABASE_DB_URL
         sync: false
+
+      # --- Optional ---
       - key: PORT
         sync: false
-
       - key: CHUNK_SIZE
         sync: false
       - key: CHUNK_OVERLAP
