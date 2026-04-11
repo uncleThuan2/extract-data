@@ -120,7 +120,7 @@ def search_similar(query: str, top_k: int = 5) -> list[dict]:
 def list_indexed_files() -> list[str]:
     """List all unique filenames that have been indexed."""
     engine = create_engine(settings.SUPABASE_DB_URL)
-    table = f'vecs."{settings.COLLECTION_NAME}"'
+    table = f'"{settings.DB_SCHEMA}"."{settings.COLLECTION_NAME}"'
     try:
         with engine.connect() as conn:
             rows = conn.execute(
@@ -134,7 +134,7 @@ def list_indexed_files() -> list[str]:
 def delete_file(filename: str) -> int:
     """Delete all chunks belonging to a given filename. Returns number of chunks deleted."""
     engine = create_engine(settings.SUPABASE_DB_URL)
-    table = f'vecs."{settings.COLLECTION_NAME}"'
+    table = f'"{settings.DB_SCHEMA}"."{settings.COLLECTION_NAME}"'
     try:
         with engine.connect() as conn:
             rows = conn.execute(
@@ -150,6 +150,24 @@ def delete_file(filename: str) -> int:
         collection.delete(ids=ids_to_delete)
         logger.info("Deleted %d chunks for file '%s'", len(ids_to_delete), filename)
 
+        # Reclaim disk space from dead tuples left by PostgreSQL MVCC.
+        # VACUUM cannot run inside a transaction, so we use AUTOCOMMIT isolation.
+        # VACUUM FULL rewrites the table and actually frees space (reduces pg_total_relation_size).
+        # Regular VACUUM only marks dead tuples reusable without shrinking the file.
+        vacuum_table = f'"{settings.DB_SCHEMA}"."{settings.COLLECTION_NAME}"'
+        vacuum_engine = create_engine(
+            settings.SUPABASE_DB_URL,
+            isolation_level="AUTOCOMMIT",
+        )
+        try:
+            with vacuum_engine.connect() as conn:
+                conn.execute(text(f"VACUUM FULL {vacuum_table}"))
+            logger.info("VACUUM FULL completed on %s", vacuum_table)
+        except Exception as exc:
+            logger.warning("VACUUM failed (non-critical): %s", exc)
+        finally:
+            vacuum_engine.dispose()
+
     return len(ids_to_delete)
 
 
@@ -163,7 +181,7 @@ def get_storage_stats() -> dict:
       total_chunks        – total number of stored chunks
       per_file            – list of (filename, chunk_count) sorted by count desc
     """
-    table = f'vecs."{settings.COLLECTION_NAME}"'
+    table = f'"{settings.DB_SCHEMA}"."{settings.COLLECTION_NAME}"'
     engine = create_engine(settings.SUPABASE_DB_URL)
     try:
         with engine.connect() as conn:
@@ -172,7 +190,8 @@ def get_storage_stats() -> dict:
             ).scalar() or 0
 
             collection_size_bytes: int = conn.execute(
-                text(f"SELECT pg_total_relation_size('{table}')")
+                text("SELECT pg_total_relation_size(:tbl)"),
+                {"tbl": table},
             ).scalar() or 0
 
             rows = conn.execute(

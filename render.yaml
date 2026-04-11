@@ -40,6 +40,8 @@ services:
         sync: false
       - key: SUPABASE_DB_URL
         sync: false
+      - key: DB_SCHEMA
+        sync: false
 
       # --- Optional ---
       - key: PORT

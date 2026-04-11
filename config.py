@@ -76,6 +76,8 @@ class Settings:
     # jina-embeddings-v3      = 1024 dims (or set lower via EMBEDDING_DIMENSION)
     EMBEDDING_DIMENSION: int = int(os.getenv("EMBEDDING_DIMENSION", "768"))
     COLLECTION_NAME: str = "pdf_documents"
+    # Schema where vecs creates its tables (default: "vecs", set to "public" if needed)
+    DB_SCHEMA: str = os.getenv("DB_SCHEMA", "vecs")
 
 
 settings = Settings()
